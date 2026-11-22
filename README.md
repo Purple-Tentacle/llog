@@ -6,6 +6,7 @@ One Python file, standard library only, nothing to compile.
 - Callsign entry with QRZ.com lookup (XML API, needs a QRZ XML subscription for full data)
 - Live frequency and mode from the radio through Hamlib's `rigctld`
 - Typing a frequency in the logger tunes the radio
+- Two entry rows, one for VFO A and one for VFO B
 - SQLite log file, ADIF and Cabrillo export
 
 Dupe checking and scoring are configurable per contest.
@@ -35,6 +36,25 @@ python3 llog.py                     # lists the configured contests
 
 Without a running `rigctld` the logger still works; a typed frequency is then
 used for the log only.
+
+## Two VFOs
+
+There are two entry rows, one for VFO A and one for VFO B. Each row shows its
+VFO's frequency and mode and keeps its own callsign and exchange, so a
+half-typed QSO in row A stays there while you work someone in row B. `\`
+switches to the other row and makes that VFO the active one on the radio.
+A QSO is logged with the frequency and mode of the row it was entered in, and
+typing a frequency or mode tunes the VFO of the current row. If you press A/B
+on the radio, llog follows when the radio reports it.
+
+Both radios receive on the active VFO only; this is quick switching between
+two frequencies or modes, not listening to both.
+
+With a plain `rigctld`, llog reads only the active VFO, and the other row
+shows the last values llog saw (empty until you have switched to it once).
+Start `rigctld` with `--vfo` to have both VFOs read continuously. On some
+Icom radios with older Hamlib versions that makes the radio flip briefly to
+the other VFO on every read; leave `--vfo` away in that case.
 
 ## Configuration
 
@@ -147,23 +167,23 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
 | F2 | Export ADIF (`<logfile>.adi`) |
 | F3 | Export Cabrillo (`<CALL>-<date>-1.cbr`) |
-| Up / Down | Edit a logged QSO (see below) |
+| `\` | Switch to the other VFO and its entry row |
+| Up / Down | Edit a logged QSO in the list (see below) |
 | F8 | Delete the last QSO, or the selected one while editing |
 | F10 or Ctrl-X | Quit |
 
 ### Editing a QSO
 
-With an empty entry line, cursor Up loads the last QSO into the entry line;
-Up and Down move through the log, and Down past the last QSO returns to new
-QSO entry. While editing, the entry line has extra fields, so every part of
-the QSO can be changed: callsign, both reports, received and sent exchange,
-frequency (kHz), mode and UTC date and time (`2026-12-01 18:45:00`). Tab and
-Shift-Tab move between the fields. The edit line needs a terminal about 105
-columns wide.
+Cursor Up moves an edit cursor into the QSO list; Up and Down move through
+the log, and Down past the last QSO returns to QSO entry. The selected QSO is
+edited in place, cell by cell: time (UTC, `2026-12-01 18:45:00`), callsign,
+frequency (kHz), mode, both reports and both exchanges. Tab and Shift-Tab
+move between the cells.
 
 Enter saves, Esc cancels, F8 deletes the selected QSO. Moving to another QSO
-with Up or Down discards unsaved changes. The log is kept in time order, so a
-QSO whose time was changed moves to its new place in the list and exports.
+with Up or Down discards unsaved changes. Whatever is typed in the entry rows
+is left untouched while you edit. The log is kept in time order, so a QSO
+whose time was changed moves to its new place in the list and exports.
 
 Exports also work without the UI:
 

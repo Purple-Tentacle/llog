@@ -5,7 +5,7 @@ Needs only Python 3.9+ (standard library). Radio control goes through
 Hamlib's rigctld, callsign lookup through the QRZ.com XML API.
 
     rigctld -m <model> -r /dev/ttyUSB0 -s 38400 &
-    python3 llog.py mylog.db
+    python3 llog.py <contest> [logfile.db]
 """
 import argparse
 import configparser
@@ -26,7 +26,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 DEFAULT_CONFIG_DIR = os.path.expanduser("~/.config/llog")
-AGENT = "llog-0.2"
+AGENT = "llog-0.3"
 
 BANDS = [  # (low Hz, high Hz, ADIF band, Cabrillo frequency or None = kHz)
     (1_800_000, 2_000_000, "160m", None), (3_500_000, 4_000_000, "80m", None),
@@ -208,24 +208,36 @@ def ascii_only(text):
 
 # --------------------------------------------------------------------- rig
 class Rig(threading.Thread):
-    """Polls rigctld for frequency/mode and sends set commands."""
+    """Polls rigctld for frequency/mode of VFO A and B and sends commands.
+
+    Plain rigctld: only the radio's active VFO is polled; the other VFO
+    keeps its last known values. rigctld --vfo: both VFOs are polled.
+    """
 
     def __init__(self, host, port):
         super().__init__(daemon=True)
         self.addr = (host, port)
-        self.freq = None
-        self.mode = None      # raw Hamlib mode, e.g. USB
+        self.freq = {"A": None, "B": None}
+        self.mode = {"A": None, "B": None}      # raw Hamlib mode, e.g. USB
+        self.vfo = "A"                          # the radio's active VFO
+        self.vfo_mode = False                   # rigctld started with --vfo
         self.online = False
         self.error = ""
         self._todo = queue.Queue()
+        self._lock = threading.Lock()
         self._sock = None
         self._file = None
 
-    def set_freq(self, hz):
-        self._todo.put(f"F {hz}")
+    def set_freq(self, vfo, hz):
+        self._todo.put(("F", vfo, str(hz)))
 
-    def set_mode(self, hamlib_mode):
-        self._todo.put(f"M {hamlib_mode} 0")
+    def set_mode(self, vfo, hamlib_mode):
+        self._todo.put(("M", vfo, f"{hamlib_mode} 0"))
+
+    def select(self, vfo):
+        with self._lock:
+            self.vfo = vfo
+            self._todo.put(("V", vfo, ""))
 
     def _ask(self, line, extra_lines=0):
         self._sock.sendall((line + "\n").encode())
@@ -239,22 +251,44 @@ class Rig(threading.Thread):
             self._file.readline()
         return first
 
+    def _command(self, cmd, vfo, args):
+        if cmd == "V":
+            self._ask(f"V VFO{vfo}")
+        elif self.vfo_mode:
+            self._ask(f"{cmd} VFO{vfo} {args}")
+        else:                      # plain mode: acts on the active VFO
+            self._ask(f"{cmd} {args}")
+
+    def _poll(self, vfo):
+        arg = f" VFO{vfo}" if self.vfo_mode else ""
+        freq = self._ask("f" + arg)
+        mode = self._ask("m" + arg, extra_lines=1)
+        if freq:
+            self.freq[vfo] = int(float(freq))
+        if mode:
+            self.mode[vfo] = mode
+        return bool(freq)
+
     def run(self):
         while True:
             try:
                 if self._sock is None:
                     self._sock = socket.create_connection(self.addr, timeout=2)
                     self._file = self._sock.makefile("r")
+                    answer = self._ask("\\chk_vfo") or ""
+                    self.vfo_mode = answer.endswith("1")
                 while not self._todo.empty():
-                    self._ask(self._todo.get())
-                freq = self._ask("f")
-                mode = self._ask("m", extra_lines=1)
-                if freq:
-                    self.freq = int(float(freq))
-                if mode:
-                    self.mode = mode
-                self.online = bool(freq)
-                self.error = "" if freq else "rig not answering"
+                    self._command(*self._todo.get())
+                active = self._ask("v") or ""
+                with self._lock:   # follow the radio's A/B button
+                    if active in ("VFOA", "VFOB") and self._todo.empty():
+                        self.vfo = active[-1]
+                vfo = self.vfo
+                ok = self._poll(vfo)
+                if self.vfo_mode:
+                    self._poll("B" if vfo == "A" else "A")
+                self.online = ok
+                self.error = "" if ok else "rig not answering"
                 time.sleep(0.3)
             except (OSError, ValueError) as exc:
                 self.online = False
@@ -465,7 +499,7 @@ class Log:
             lines.append(f"EMAIL: {cab['email']}")
         if cab.get("specific"):
             lines.append(f"SPECIFIC: {cab['specific']}")
-        lines.append("CREATED-BY: llog 0.2")
+        lines.append("CREATED-BY: llog 0.3")
         for q in self.rows():
             ts = q["ts"]
             lines.append("QSO: {:>5} {:<2} {} {} {:<13} {:<3} {:<6} {:<13} {:<3} {}"
@@ -573,14 +607,16 @@ def load_config(config_dir, contest):
 
 
 # ---------------------------------------------------------------------- ui
-FIELDS = ("call", "rst_s", "rst_r", "exch")
-EDIT_FIELDS = FIELDS + ("exch_s", "freq", "mode", "ts")   # only while editing
+FIELDS = ("call", "rst_s", "rst_r", "exch")           # entry row fields
 LABELS = {"call": "Call", "rst_s": "Sent", "rst_r": "Rcvd",
-          "exch": "Exchange rcvd", "exch_s": "Exch sent", "freq": "kHz",
-          "mode": "Mode", "ts": "UTC date and time"}
-WIDTHS = {"call": 14, "rst_s": 5, "rst_r": 5, "exch": 20, "exch_s": 8,
-          "freq": 10, "mode": 5, "ts": 19}
-SPACE_OK = ("exch", "exch_s", "ts")      # fields that may contain a space
+          "exch": "Exchange rcvd"}
+WIDTHS = {"call": 14, "rst_s": 5, "rst_r": 5, "exch": 20}
+# QSO list columns; a logged QSO is edited in place in these cells
+COLUMNS = (("ts", 19, "UTC"), ("call", 13, "Call"), ("freq", 9, "kHz"),
+           ("mode", 5, "Mode"), ("rst_s", 4, "Sent"), ("exch_s", 7, "Exch"),
+           ("rst_r", 4, "Rcvd"), ("exch", 12, "Exch"))
+SPACE_OK = ("exch", "exch_s", "ts")      # cells that may contain a space
+ENTRY_X = 26                             # column where the entry fields start
 
 
 def parse_ts(text):
@@ -597,6 +633,13 @@ def khz_text(hz):
     return f"{(hz or 0) / 1000:.3f}".rstrip("0").rstrip(".")
 
 
+def cells(q):
+    """Text of the list cells of one QSO."""
+    return {"ts": q["ts"], "call": q["call"], "freq": khz_text(q["freq_hz"]),
+            "mode": q["mode"], "rst_s": q["rst_s"], "exch_s": q["exch_s"],
+            "rst_r": q["rst_r"], "exch": q["exch_r"]}
+
+
 class App:
     def __init__(self, cfg, log):
         self.cfg, self.log = cfg, log
@@ -604,54 +647,80 @@ class App:
         self.rules = dupe_rules(cfg)
         self.scoring = score_rules(cfg)
         self._score = (None, None)   # (log state, result)
-        self.dupe_ok = ""     # callsign whose dupe warning was confirmed
-        self.edit = None      # QSO row being edited, or None
         self.rig = Rig(cfg["rig"]["host"], cfg["rig"].getint("port"))
         self.qrz = Qrz(os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
                        os.environ.get("QRZ_PASSWORD", cfg["qrz"]["password"]))
-        self.manual_freq = 0
-        self.manual_mode = "SSB"
-        self.val = dict.fromkeys(EDIT_FIELDS, "")
-        self.focus = 0
+        # one entry row per VFO
+        self.entry = {v: {"val": dict.fromkeys(FIELDS, ""), "focus": 0,
+                          "dupe_ok": ""} for v in "AB"}
+        self.row = "A"
+        self.manual_freq = {"A": 0, "B": 0}
+        self.manual_mode = {"A": "SSB", "B": "SSB"}
+        self.edit = None      # QSO being edited in the list, or None
+        self.eval = {}        # its cell texts while editing
+        self.efocus = 1       # edited cell (index into COLUMNS)
         self.msg = "Type a callsign. Enter = log QSO."
 
+    # ---- the active entry row
+    @property
+    def val(self):
+        return self.entry[self.row]["val"]
+
+    @property
+    def focus(self):
+        return self.entry[self.row]["focus"]
+
+    @focus.setter
+    def focus(self, value):
+        self.entry[self.row]["focus"] = value
+
+    @property
+    def dupe_ok(self):
+        return self.entry[self.row]["dupe_ok"]
+
+    @dupe_ok.setter
+    def dupe_ok(self, value):
+        self.entry[self.row]["dupe_ok"] = value
+
     # ---- state helpers
-    def freq(self):
-        return self.rig.freq if self.rig.online and self.rig.freq else self.manual_freq
+    def freq(self, row=None):
+        row = row or self.row
+        if self.rig.online and self.rig.freq[row]:
+            return self.rig.freq[row]
+        return self.manual_freq[row]
 
-    def mode(self):
-        if self.rig.online and self.rig.mode:
-            return RIG_MODES.get(self.rig.mode, self.rig.mode)
-        return self.manual_mode
+    def mode(self, row=None):
+        row = row or self.row
+        if self.rig.online and self.rig.mode[row]:
+            return RIG_MODES.get(self.rig.mode[row], self.rig.mode[row])
+        return self.manual_mode[row]
 
-    def default_rst(self):
-        return "59" if self.mode() in ("SSB", "FM", "AM") else "599"
+    def default_rst(self, row=None):
+        return "59" if self.mode(row) in ("SSB", "FM", "AM") else "599"
 
     def exch_sent(self):
         sent = self.cfg["contest"]["exchange_sent"]
         return f"{self.log.count() + 1:03d}" if sent == "#" else sent
 
-    def fields(self):
-        return EDIT_FIELDS if self.edit else FIELDS
-
     def clear(self):
-        self.val = dict.fromkeys(EDIT_FIELDS, "")
-        self.focus = 0
-        self.dupe_ok = ""
-        self.edit = None
+        self.entry[self.row] = {"val": dict.fromkeys(FIELDS, ""), "focus": 0,
+                                "dupe_ok": ""}
 
     def dupe(self):
-        call = self.val["call"]
-        if not is_call(call):
-            return None
         if self.edit:      # compare with the QSOs made before the edited one
+            call = self.eval["call"]
+            if not is_call(call):
+                return None
             new = self.edited()
             ts = new.get("ts", self.edit["ts"])
             when = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
             return self.log.find_dupe(
                 self.rules, call, new.get("freq_hz", self.edit["freq_hz"]),
-                new.get("mode", self.edit["mode"]), self.val["exch"].strip(),
+                new.get("mode", self.edit["mode"]), self.eval["exch"].strip(),
                 when.replace(tzinfo=timezone.utc), before=(ts, self.edit["id"]))
+        call = self.val["call"]
+        if not is_call(call):
+            return None
         return self.log.find_dupe(self.rules, call, self.freq(), self.mode(),
                                   self.val["exch"].strip())
 
@@ -675,100 +744,34 @@ class App:
                 f"{band_of(q['freq_hz'] or 0) or '?'} {q['mode']}"
                 + (f", exchange {q['exch_r']}" if q["exch_r"] else ""))
 
-    # ---- actions
+    # ---- actions on the active entry row
     def set_freq(self, hz):
-        self.manual_freq = hz
+        self.manual_freq[self.row] = hz
         if self.rig.online:
-            self.rig.set_freq(hz)
-            self.msg = f"Rig set to {fmt_freq(hz)}"
+            self.rig.set_freq(self.row, hz)
+            self.msg = f"VFO {self.row} set to {fmt_freq(hz)}"
         else:
-            self.msg = f"Rig offline - frequency set manually to {fmt_freq(hz)}"
+            self.msg = (f"Rig offline - VFO {self.row} frequency set manually "
+                        f"to {fmt_freq(hz)}")
 
     def set_mode(self, mode):
-        self.manual_mode = mode
+        self.manual_mode[self.row] = mode
         if self.rig.online:
             hamlib = mode
             if mode == "SSB":
                 hamlib = "LSB" if self.freq() < 10_000_000 else "USB"
-            self.rig.set_mode(hamlib)
-        self.msg = f"Mode {mode}"
+            self.rig.set_mode(self.row, hamlib)
+        self.msg = f"VFO {self.row} mode {mode}"
 
-    def select(self, step):
-        """Cursor up/down: load the previous/next QSO into the entry line."""
-        rows = self.log.rows()
-        if not rows:
-            return
-        if self.edit is None:
-            if step > 0:
-                return
-            if any(self.val.values()):
-                self.msg = "Entry line is not empty - Esc clears it, then Up edits."
-                return
-            index = len(rows) - 1
-        else:
-            ids = [q["id"] for q in rows]
-            index = ids.index(self.edit["id"]) + step if self.edit["id"] in ids \
-                else len(rows) - 1
-            if index >= len(rows):
-                self.clear()
-                self.msg = "Back to new QSO."
-                return
-            index = max(index, 0)
-        focus = self.focus
-        self.clear()
-        self.edit, self.focus = rows[index], focus
-        self.val = {"call": self.edit["call"], "rst_s": self.edit["rst_s"],
-                    "rst_r": self.edit["rst_r"], "exch": self.edit["exch_r"],
-                    "exch_s": self.edit["exch_s"],
-                    "freq": khz_text(self.edit["freq_hz"]),
-                    "mode": self.edit["mode"], "ts": self.edit["ts"]}
-        self.msg = (f"Editing QSO #{self.edit['id']} - Enter saves, Esc cancels, "
-                    "Up/Down other QSO, F8 deletes it.")
-
-    def edited(self):
-        """Valid frequency/mode/time typed in edit mode; bad ones are left out."""
-        out, old = {}, self.edit
-        hz = parse_freq(self.val["freq"])
-        if self.val["freq"] == khz_text(old["freq_hz"]):
-            out["freq_hz"] = old["freq_hz"]      # untouched: keep exact value
-        elif hz:
-            out["freq_hz"] = hz
-        if self.val["mode"].isalnum():
-            out["mode"] = self.val["mode"]
-        if parse_ts(self.val["ts"]):
-            out["ts"] = parse_ts(self.val["ts"])
-        return out
-
-    def save_edit(self):
-        call, old, new = self.val["call"], self.edit, self.edited()
-        problem = ("Not a valid callsign." if not is_call(call) else
-                   "Frequency must be a number in kHz, e.g. 144300."
-                   if "freq_hz" not in new else
-                   "Mode must be letters/digits, e.g. CW, SSB, FM."
-                   if "mode" not in new else
-                   "Time must look like 2026-12-01 18:45:00 (UTC)."
-                   if "ts" not in new else "")
-        if problem:
-            self.msg = problem
-            return
-        fields = dict(new, call=call, exch_r=self.val["exch"].strip(),
-                      exch_s=self.val["exch_s"].strip(),
-                      rst_s=self.val["rst_s"] or old["rst_s"],
-                      rst_r=self.val["rst_r"] or old["rst_r"])
-        if call != old["call"]:        # name etc. belonged to the old callsign
-            info = self.qrz.info(call) or {}
-            fields.update(name=info.get("name", ""), qth=info.get("qth", ""),
-                          grid=info.get("grid", ""),
-                          country=info.get("country", ""))
-        self.log.update(old["id"], **fields)
-        self.clear()
-        self.msg = f"Saved QSO #{old['id']} ({call})"
+    def switch_row(self):
+        self.row = "B" if self.row == "A" else "A"
+        if self.rig.online:
+            self.rig.select(self.row)
+        self.msg = f"VFO {self.row}"
 
     def enter(self):
         call = self.val["call"]
-        if self.edit:
-            self.save_edit()
-        elif self.focus == 0 and parse_freq(call) and not is_call(call):
+        if self.focus == 0 and parse_freq(call) and not is_call(call):
             self.set_freq(parse_freq(call))
             self.val["call"] = ""
         elif self.focus == 0 and call in TYPED_MODES:
@@ -792,7 +795,7 @@ class App:
                 exch_s=self.exch_sent(), exch_r=self.val["exch"].strip(),
                 name=info.get("name", ""), qth=info.get("qth", ""),
                 grid=info.get("grid", ""), country=info.get("country", ""))
-            self.msg = f"Logged {call}"
+            self.msg = f"Logged {call} on VFO {self.row}"
             self.clear()
 
     def leave_call_field(self):
@@ -814,10 +817,115 @@ class App:
         except OSError as exc:
             self.msg = f"Export failed: {exc}"
 
+    # ---- editing a logged QSO in the list
+    def select(self, step):
+        """Cursor up/down: move the edit cursor through the QSO list."""
+        rows = self.log.rows()
+        if not rows:
+            return
+        if self.edit is None:
+            if step > 0:
+                return
+            index, self.efocus = len(rows) - 1, 1
+        else:
+            ids = [q["id"] for q in rows]
+            index = ids.index(self.edit["id"]) + step if self.edit["id"] in ids \
+                else len(rows) - 1
+            if index >= len(rows):
+                self.edit = None
+                self.msg = "Back to QSO entry."
+                return
+            index = max(index, 0)
+        self.edit = rows[index]
+        self.eval = cells(self.edit)
+        self.msg = (f"Editing QSO #{self.edit['id']} - Tab next cell, Enter "
+                    "saves, Esc cancels, Up/Down other QSO, F8 deletes it.")
+
+    def edited(self):
+        """Valid frequency/mode/time typed while editing; bad ones are left out."""
+        out, old = {}, self.edit
+        hz = parse_freq(self.eval["freq"])
+        if self.eval["freq"] == khz_text(old["freq_hz"]):
+            out["freq_hz"] = old["freq_hz"]      # untouched: keep exact value
+        elif hz:
+            out["freq_hz"] = hz
+        if self.eval["mode"].isalnum():
+            out["mode"] = self.eval["mode"]
+        if parse_ts(self.eval["ts"]):
+            out["ts"] = parse_ts(self.eval["ts"])
+        return out
+
+    def save_edit(self):
+        call, old, new = self.eval["call"], self.edit, self.edited()
+        problem = ("Not a valid callsign." if not is_call(call) else
+                   "Frequency must be a number in kHz, e.g. 144300."
+                   if "freq_hz" not in new else
+                   "Mode must be letters/digits, e.g. CW, SSB, FM."
+                   if "mode" not in new else
+                   "Time must look like 2026-12-01 18:45:00 (UTC)."
+                   if "ts" not in new else "")
+        if problem:
+            self.msg = problem
+            return
+        fields = dict(new, call=call, exch_r=self.eval["exch"].strip(),
+                      exch_s=self.eval["exch_s"].strip(),
+                      rst_s=self.eval["rst_s"] or old["rst_s"],
+                      rst_r=self.eval["rst_r"] or old["rst_r"])
+        if call != old["call"]:        # name etc. belonged to the old callsign
+            info = self.qrz.info(call) or {}
+            fields.update(name=info.get("name", ""), qth=info.get("qth", ""),
+                          grid=info.get("grid", ""),
+                          country=info.get("country", ""))
+        self.log.update(old["id"], **fields)
+        self.edit = None
+        self.msg = f"Saved QSO #{old['id']} ({call})"
+
+    def edit_key(self, ch):
+        name, width, _ = COLUMNS[self.efocus]
+        if ch in ("\n", "\r", curses.KEY_ENTER):
+            self.save_edit()
+        elif ch == "\x1b":
+            self.edit = None
+            self.msg = "Edit cancelled."
+        elif ch == curses.KEY_BTAB:
+            self.efocus = (self.efocus - 1) % len(COLUMNS)
+        elif ch == "\t" or (ch == " " and name not in SPACE_OK):
+            self.efocus = (self.efocus + 1) % len(COLUMNS)
+        elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+            self.eval[name] = self.eval[name][:-1]
+        elif isinstance(ch, str) and ch.isprintable():
+            if len(self.eval[name]) < width:
+                self.eval[name] += ch.upper()
+
+    # ---- keys
+    def entry_key(self, ch):
+        name = FIELDS[self.focus]
+        if ch in ("\n", "\r", curses.KEY_ENTER):
+            self.enter()
+        elif ch == "\\":
+            self.switch_row()
+        elif ch == "\x1b":                                       # Esc
+            self.clear()
+            self.msg = "Cleared."
+        elif ch in ("\t", curses.KEY_BTAB) or (ch == " " and name != "exch"):
+            if self.focus == 0:
+                self.leave_call_field()
+            if ch == curses.KEY_BTAB:
+                self.focus = (self.focus - 1) % len(FIELDS)
+            elif ch == " " and self.focus == 0:
+                self.focus = FIELDS.index("exch")   # skip the RST fields
+            else:
+                self.focus = (self.focus + 1) % len(FIELDS)
+        elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+            self.val[name] = self.val[name][:-1]
+            self.dupe_ok = ""
+        elif isinstance(ch, str) and ch.isprintable():
+            if len(self.val[name]) < WIDTHS[name]:
+                self.val[name] += ch.upper()
+            self.dupe_ok = ""
+
     def key(self, scr, ch):
         """Returns False to quit."""
-        fields = self.fields()
-        name = fields[self.focus]
         if ch in (curses.KEY_F10, "\x18"):                       # F10, Ctrl-X
             return False
         if ch == curses.KEY_F2:
@@ -839,33 +947,17 @@ class App:
                 scr.timeout(200)
                 if answer in ("y", "Y"):
                     self.log.delete(rows[0]["id"])
-                    self.clear()
+                    self.edit = None
                     self.msg = "Deleted."
                 else:
                     self.msg = "Kept."
-        elif ch in ("\n", "\r", curses.KEY_ENTER):
-            self.enter()
-        elif ch == "\x1b":                                       # Esc
-            self.clear()
-            self.msg = "Cleared."
-        elif ch in ("\t", curses.KEY_BTAB) or (ch == " " and name not in SPACE_OK):
-            if self.focus == 0:
-                self.leave_call_field()
-            if ch == curses.KEY_BTAB:
-                self.focus = (self.focus - 1) % len(fields)
-            elif ch == " " and self.focus == 0:
-                self.focus = FIELDS.index("exch")   # skip the RST fields
-            else:
-                self.focus = (self.focus + 1) % len(fields)
-        elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
-            self.val[name] = self.val[name][:-1]
-            self.dupe_ok = ""
-        elif isinstance(ch, str) and ch.isprintable():
-            if len(self.val[name]) < WIDTHS[name]:
-                self.val[name] += ch.upper()
-            self.dupe_ok = ""
+        elif self.edit:
+            self.edit_key(ch)
+        else:
+            self.entry_key(ch)
         return True
 
+    # ---- drawing
     def mult_panel(self, width):
         """Rows of (text, worked): every multiplier named in the contest file,
         then worked ones that matched a pattern such as N[0-9][0-9]."""
@@ -897,13 +989,13 @@ class App:
             return ""
         r = self.score()
         if self.scoring["mults"]:
-            return f"Score: {r['points']}x{r['mults']}={r['score']}  |  "
-        return f"Score: {r['score']}  |  "
+            return f"Score: {r['points']}x{r['mults']}={r['score']} | "
+        return f"Score: {r['score']} | "
 
-    # ---- drawing
     def draw(self, scr):
         scr.erase()
         h, w = scr.getmaxyx()
+        cursor = (h - 5, ENTRY_X)
 
         def put(y, x, text, attr=0):
             if 0 <= y < h and 0 <= x < w:
@@ -914,22 +1006,24 @@ class App:
 
         rig = "RIG ok" if self.rig.online else "RIG offline (manual)"
         utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") + "Z"
-        head = (f" {self.mycall}  {self.cfg['contest']['contest']}  |  {fmt_freq(self.freq())} kHz  {self.mode()}  "
-                f"{band_of(self.freq() or 0)}  |  {rig}  |  {self.score_text()}QSOs: "
-                f"{self.log.count()}  |  {utc} ")
+        head = (f" {self.mycall} {self.cfg['contest']['contest']} | "
+                f"VFO {self.row} {band_of(self.freq() or 0) or '-'} "
+                f"{self.mode()} | {rig} | {self.score_text()}"
+                f"QSOs: {self.log.count()} | {utc} ")
         put(0, 0, head.ljust(w - 1), curses.A_REVERSE)
 
-        put(2, 1, f"{'#':>4} {'UTC':<16} {'Call':<13} {'kHz':>9} {'Mode':<5}"
-                  f"{'Sent':<5}{'Exch':<7}{'Rcvd':<5}{'Exch':<10}{'Pts':<6}Name",
-            curses.A_BOLD)
+        # QSO list, with the edited QSO shown as editable cells
+        put(2, 1, f"{'#':>4} " + " ".join(f"{title:<{width}}"
+                                          for _, width, title in COLUMNS)
+            + f" {'Pts':<6}Name", curses.A_BOLD)
         mult_rows = self.mult_panel(w - 2)
-        if h - 12 - len(mult_rows) < 3:      # terminal too small for the panel
+        if h - 13 - len(mult_rows) < 3:      # terminal too small for the panel
             mult_rows = []
-        space = max(h - 11 - (len(mult_rows) + 1 if mult_rows else 0), 1)
+        space = max(h - 12 - (len(mult_rows) + 1 if mult_rows else 0), 1)
         for n, row in enumerate(mult_rows):
             x = 1
             for text, worked in row:
-                put(h - 8 - len(mult_rows) + n, x, text,
+                put(h - 9 - len(mult_rows) + n, x, text,
                     self.good_attr if worked else 0)
                 x += len(text) + 1
         per_qso = self.score()["per_qso"]
@@ -943,15 +1037,23 @@ class App:
         for i, q in enumerate(rows[max(end - space, 0):end]):
             points, is_dupe, is_mult = per_qso.get(q["id"], (0, False, False))
             pts = "DUPE" if is_dupe else f"{points}{'+M' if is_mult else ''}"
-            put(3 + i, 1,
-                f"{q['id']:>4} {q['ts'][:16]:<16} {q['call']:<13} "
-                f"{(q['freq_hz'] or 0) / 1000:>9.1f} {q['mode']:<5}"
-                f"{q['rst_s']:<5}{q['exch_s']:<7}{q['rst_r']:<5}"
-                f"{q['exch_r']:<10}{pts:<6}{q['name']}",
-                curses.A_REVERSE if self.edit and q["id"] == self.edit["id"]
-                else 0)
+            editing = self.edit and q["id"] == self.edit["id"]
+            texts = self.eval if editing else cells(q)
+            put(3 + i, 1, f"{q['id']:>4}", curses.A_BOLD if editing else 0)
+            x = 6
+            for n, (name, width, _) in enumerate(COLUMNS):
+                attr = 0
+                if editing:
+                    attr = curses.A_REVERSE if n == self.efocus \
+                        else curses.A_UNDERLINE
+                    if n == self.efocus:
+                        cursor = (3 + i, x + min(len(texts[name]), width - 1))
+                put(3 + i, x, texts[name][:width].ljust(width), attr)
+                x += width + 1
+            put(3 + i, x, f"{pts:<6}{q['name']}")
 
-        call = self.val["call"]
+        # hints for the active entry row (or the edited QSO)
+        call = self.eval["call"] if self.edit else self.val["call"]
         info = self.qrz.info(call) if is_call(call) else None
         if not self.qrz.user:
             line = "QRZ: no username configured"
@@ -965,33 +1067,45 @@ class App:
             line = "QRZ: " + "  |  ".join(
                 x for x in (info["name"], info["qth"], info["country"],
                             info["grid"]) if x)
-        put(h - 7, 1, line, curses.A_BOLD)
+        put(h - 8, 1, line, curses.A_BOLD)
         dupe = self.dupe()
         if dupe:
-            put(h - 6, 1, " " + self.dupe_text(dupe) + " ",
+            put(h - 7, 1, " " + self.dupe_text(dupe) + " ",
                 self.warn_attr | curses.A_BOLD)
         elif self.new_mult():
-            put(h - 6, 1, f" NEW MULTIPLIER: {self.new_mult()} ",
+            put(h - 7, 1, f" NEW MULTIPLIER: {self.new_mult()} ",
                 self.good_attr | curses.A_BOLD)
 
-        x, cursor = 1, (h - 4, 1)
-        for i, name in enumerate(self.fields()):
-            put(h - 5, x, LABELS[name])
-            shown = self.val[name]
-            if not shown and name.startswith("rst"):
-                shown = self.default_rst()
-            attr = curses.A_REVERSE if i == self.focus else curses.A_UNDERLINE
-            put(h - 4, x, shown.ljust(WIDTHS[name]), attr)
-            if i == self.focus:
-                cursor = (h - 4, x + len(self.val[name]))
+        # two entry rows, one per VFO
+        put(h - 6, 1, "VFO   Frequency  Mode")
+        x = ENTRY_X
+        for name in FIELDS:
+            put(h - 6, x, LABELS[name])
             x += max(WIDTHS[name], len(LABELS[name])) + 2
-        if not self.edit:
-            put(h - 5, x, "Exch sent")
-            put(h - 4, x, self.exch_sent() or "-")
+        put(h - 6, x, "Exch sent")
+        for line, vfo in ((h - 5, "A"), (h - 4, "B")):
+            active = vfo == self.row and not self.edit
+            put(line, 1, f"{'>' if vfo == self.row else ' '}{vfo}",
+                curses.A_REVERSE | curses.A_BOLD if vfo == self.row else 0)
+            put(line, 5, f"{fmt_freq(self.freq(vfo)):>11}  {self.mode(vfo):<5}",
+                curses.A_BOLD if vfo == self.row else 0)
+            entry = self.entry[vfo]
+            x = ENTRY_X
+            for i, name in enumerate(FIELDS):
+                shown = entry["val"][name]
+                if not shown and name.startswith("rst"):
+                    shown = self.default_rst(vfo)
+                attr = curses.A_REVERSE if active and i == entry["focus"] \
+                    else curses.A_UNDERLINE
+                put(line, x, shown.ljust(WIDTHS[name]), attr)
+                if active and i == entry["focus"]:
+                    cursor = (line, x + len(entry["val"][name]))
+                x += max(WIDTHS[name], len(LABELS[name])) + 2
+            put(line, x, self.exch_sent() or "-")
 
         put(h - 2, 1, self.msg)
-        put(h - 1, 0, " Enter log | Tab next | Space call>exch | Esc clear | Up edit | "
-                      "<kHz> Enter = QSY | CW/SSB/FM Enter = mode | F2 ADIF | "
+        put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ VFO A/B | "
+                      "<kHz> or <mode> Enter = QSY | Up edit | F2 ADIF | "
                       "F3 Cabrillo | F8 delete | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
         try:
@@ -1015,6 +1129,8 @@ class App:
         scr.timeout(200)
         self.rig.start()
         while True:
+            if self.rig.online and self.rig.vfo != self.row:
+                self.row = self.rig.vfo      # A/B was pressed on the radio
             self.draw(scr)
             try:
                 ch = scr.get_wch()

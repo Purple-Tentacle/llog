@@ -3,24 +3,32 @@ import configparser, os, pty, select, socket, sqlite3, sys, threading, time, imp
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.join(os.path.dirname(HERE), "llog.py")
-state = {"freq": 14060000, "mode": "CW", "cmds": []}
+state = {"vfo": "A", "freq": {"A": 14060000, "B": 432200000},
+         "mode": {"A": "CW", "B": "FM"}, "cmds": []}
 
 
-def fake_rigctld(server):
+def fake_rigctld(server):          # plain rigctld (no --vfo): acts on active VFO
     while True:
         conn, _ = server.accept()
         f = conn.makefile("r")
         for line in f:
             line = line.strip()
             state["cmds"].append(line)
+            v = state["vfo"]
             if line == "f":
-                conn.sendall(f"{state['freq']}\n".encode())
+                conn.sendall(f"{state['freq'][v]}\n".encode())
             elif line == "m":
-                conn.sendall(f"{state['mode']}\n500\n".encode())
+                conn.sendall(f"{state['mode'][v]}\n500\n".encode())
+            elif line == "v":
+                conn.sendall(f"VFO{v}\n".encode())
+            elif line == "\\chk_vfo":
+                conn.sendall(b"CHKVFO 0\n")
+            elif line.startswith("V VFO"):
+                state["vfo"] = line[-1]; conn.sendall(b"RPRT 0\n")
             elif line.startswith("F "):
-                state["freq"] = int(line.split()[1]); conn.sendall(b"RPRT 0\n")
+                state["freq"][v] = int(line.split()[1]); conn.sendall(b"RPRT 0\n")
             elif line.startswith("M "):
-                state["mode"] = line.split()[1]; conn.sendall(b"RPRT 0\n")
+                state["mode"][v] = line.split()[1]; conn.sendall(b"RPRT 0\n")
             else:
                 conn.sendall(b"RPRT -1\n")
 
@@ -73,16 +81,21 @@ send("7030.5\r", 1.2)                                         # QSY via logger
 send("ssb\r", 1.2)                                            # mode via logger
 send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\r")    # QSO 2 with RSTs
 send("oops1x\r"); send("\x1b[19~"); send("y")                 # QSO 3, F8 delete
-UP = "\x1bOA"
-send(UP); send("\t\t\t"); send("\x7f\x7f"); send("o05\r")      # edit QSO 2 exchange
+UP, BTAB = "\x1bOA", "\x1b[Z"
+send("dl9"); send(UP)                                         # typed text stays in row
+send("\t" * 6); send("\x7f\x7f"); send("o05\r")               # edit QSO 2 exchange in list
 send(UP); send(UP); send("x"); send("\x1b")                   # edit QSO 1, cancel
+send("\x7f\x7f\x7f")                                          # remove "dl9" again
 send("oops2x\r"); send(UP); send("\x1b[19~"); send("y")        # delete selected QSO
-send("zz\x7f\x7f")
 send(UP); send(UP); send("\x7f\x7f"); send("\r")               # QSO 1: DL1ABC/P -> DL1ABC
-send(UP); send("\t" * 5); send("\x7f" * 6); send("7040\t")      # QSO 2: frequency,
-send("\x7f" * 3); send("cw\t"); send("\x7f" * 2); send("\r")     # mode; bad time refused
+send(UP); send("\t"); send("\x7f" * 6); send("7040\t")         # QSO 2: frequency,
+send("\x7f" * 3); send("cw"); send(BTAB * 3)                   # mode, back to time cell
+send("\x7f" * 2); send("\r")                                  # bad time refused
 assert b"Time must look like" in screen
 send("59\r")                                                  # time fixed, saved
+send("dl7");  send("\\", 1.2)                                  # leave text in row A, go to VFO B
+send("db1xx\r"); send("\\", 1.2)                              # QSO on VFO B, back to A
+send("\x7f\x7fk3aa\r")                                        # row A kept "DL7": DLK3AA
 send("\x1bOQ"); send("\x1bOR")                            # F2, F3 exports
 send("\x1b[21~", 1.0)                                         # F10 quit
 os.waitpid(pid, 0)
@@ -91,7 +104,10 @@ rows = sqlite3.connect(db).execute(
     "SELECT call,freq_hz,mode,rst_s,rst_r,exch_s,exch_r FROM qso").fetchall()
 print(rows)
 assert rows == [("DL1ABC", 14060000, "CW", "599", "599", "N99", "O05"),
-                ("DK2XYZ", 7040000, "CW", "57", "55", "N99", "O05")], rows
+                ("DK2XYZ", 7040000, "CW", "57", "55", "N99", "O05"),
+                ("DB1XX", 432200000, "FM", "59", "59", "N99", ""),
+                ("DK3AA", 7030500, "SSB", "59", "59", "N99", "")], rows
+assert "V VFOB" in state["cmds"] and "V VFOA" in state["cmds"]
 assert sqlite3.connect(db).execute(
     "SELECT ts FROM qso WHERE call='DK2XYZ'").fetchone()[0].endswith(":59")
 assert "F 7030500" in state["cmds"] and "M LSB 0" in state["cmds"], state["cmds"][-20:]
@@ -111,6 +127,24 @@ assert m.parse_freq("144300") == 144300000 and m.parse_freq("14.060") == 1406000
 assert m.cabrillo_freq(144300000) == "144" and m.cabrillo_freq(7030500) == "7030"
 assert m.parse_ts("2026-12-01 18:45") == "2026-12-01 18:45:00"
 assert m.parse_ts("18:45") is None and m.khz_text(7030500) == "7030.5"
+# rig thread against a rigctld in --vfo mode: both VFOs are read and addressed
+vstate = {"freq": {"A": 144300000, "B": 432200000}, "cmds": []}
+def fake_vfo_rigctld(srv):
+    conn, _ = srv.accept()
+    for line in conn.makefile("r"):
+        p = line.split(); vstate["cmds"].append(line.strip())
+        if p[0] == "\\chk_vfo": conn.sendall(b"CHKVFO 1\n")
+        elif p[0] == "v": conn.sendall(b"VFOA\n")
+        elif p[0] == "f": conn.sendall(f"{vstate['freq'][p[1][-1]]}\n".encode())
+        elif p[0] == "m": conn.sendall(b"FM\n15000\n")
+        elif p[0] == "F": vstate["freq"][p[1][-1]] = int(p[2]); conn.sendall(b"RPRT 0\n")
+        else: conn.sendall(b"RPRT 0\n")
+srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen()
+threading.Thread(target=fake_vfo_rigctld, args=(srv,), daemon=True).start()
+rig = m.Rig("127.0.0.1", srv.getsockname()[1]); rig.start(); time.sleep(1)
+assert rig.vfo_mode and rig.online and rig.freq == {"A": 144300000, "B": 432200000}
+rig.set_freq("B", 433500000); time.sleep(1)
+assert "F VFOB 433500000" in vstate["cmds"] and rig.freq["B"] == 433500000
 # dupe rules
 from datetime import datetime, timezone, timedelta
 lg = m.Log(os.path.join(work, "d.db"))
@@ -157,7 +191,7 @@ r = m.compute_score(rows(("DL1A", V, "CW", "O05"), ("DL1B", V, "FM", "NOTO"),
                          ("DL1E", U, "FM", "O05"), ("DL1F", V, "FM", "NM")),
                     dr, sr)
 assert (r["points"], r["mults"], r["score"]) == (18, 3, 54), r
-assert "CLAIMED-SCORE: 24" in open(os.path.join(work, "DA2IT-" +
+assert "CLAIMED-SCORE: 36" in open(os.path.join(work, "DA2IT-" +
     datetime.now(timezone.utc).strftime("%Y-%m-%d") + "-1.cbr")).read()
 import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
