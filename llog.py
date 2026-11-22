@@ -377,18 +377,26 @@ class Log:
         rows = [dict(zip(("id",) + self.COLS, r)) for r in self.db.execute(sql)]
         return rows[-last:] if last else rows
 
-    def delete_last(self):
-        self.db.execute("DELETE FROM qso WHERE id=(SELECT MAX(id) FROM qso)")
+    def delete(self, qso_id):
+        self.db.execute("DELETE FROM qso WHERE id=?", (qso_id,))
         self.db.commit()
 
-    def find_dupe(self, rules, call, freq_hz, mode, exch="", now=None):
+    def update(self, qso_id, **fields):
+        self.db.execute(
+            f"UPDATE qso SET {','.join(k + '=?' for k in fields)} WHERE id=?",
+            list(fields.values()) + [qso_id])
+        self.db.commit()
+
+    def find_dupe(self, rules, call, freq_hz, mode, exch="", now=None,
+                  before_id=None):
         """Returns the earlier QSO that makes this one a dupe, or None."""
         if rules["check"] == "off":
             return None
         now = now or datetime.now(timezone.utc)
         found = self.db.execute(
             "SELECT ts, call, freq_hz, mode, exch_r FROM qso "
-            "WHERE call LIKE ? ORDER BY id DESC", (f"%{base_call(call)}%",))
+            "WHERE call LIKE ? AND id < ? ORDER BY id DESC",
+            (f"%{base_call(call)}%", before_id or 1 << 62))
         for ts, old_call, old_freq, old_mode, old_exch in found:
             if rules["ignore_suffix"]:
                 if base_call(old_call) != base_call(call):
@@ -575,6 +583,7 @@ class App:
         self.scoring = score_rules(cfg)
         self._score = (None, None)   # (log state, result)
         self.dupe_ok = ""     # callsign whose dupe warning was confirmed
+        self.edit = None      # QSO row being edited, or None
         self.rig = Rig(cfg["rig"]["host"], cfg["rig"].getint("port"))
         self.qrz = Qrz(os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
                        os.environ.get("QRZ_PASSWORD", cfg["qrz"]["password"]))
@@ -604,11 +613,18 @@ class App:
         self.val = dict.fromkeys(FIELDS, "")
         self.focus = 0
         self.dupe_ok = ""
+        self.edit = None
 
     def dupe(self):
         call = self.val["call"]
         if not is_call(call):
             return None
+        if self.edit:      # compare with the QSOs made before the edited one
+            when = datetime.strptime(self.edit["ts"], "%Y-%m-%d %H:%M:%S")
+            return self.log.find_dupe(
+                self.rules, call, self.edit["freq_hz"], self.edit["mode"],
+                self.val["exch"].strip(), when.replace(tzinfo=timezone.utc),
+                before_id=self.edit["id"])
         return self.log.find_dupe(self.rules, call, self.freq(), self.mode(),
                                   self.val["exch"].strip())
 
@@ -650,9 +666,57 @@ class App:
             self.rig.set_mode(hamlib)
         self.msg = f"Mode {mode}"
 
+    def select(self, step):
+        """Cursor up/down: load the previous/next QSO into the entry line."""
+        rows = self.log.rows()
+        if not rows:
+            return
+        if self.edit is None:
+            if step > 0:
+                return
+            if any(self.val.values()):
+                self.msg = "Entry line is not empty - Esc clears it, then Up edits."
+                return
+            index = len(rows) - 1
+        else:
+            ids = [q["id"] for q in rows]
+            index = ids.index(self.edit["id"]) + step if self.edit["id"] in ids \
+                else len(rows) - 1
+            if index >= len(rows):
+                self.clear()
+                self.msg = "Back to new QSO."
+                return
+            index = max(index, 0)
+        focus = self.focus
+        self.clear()
+        self.edit, self.focus = rows[index], focus
+        self.val = {"call": self.edit["call"], "rst_s": self.edit["rst_s"],
+                    "rst_r": self.edit["rst_r"], "exch": self.edit["exch_r"]}
+        self.msg = (f"Editing QSO #{self.edit['id']} - Enter saves, Esc cancels, "
+                    "Up/Down other QSO, F8 deletes it.")
+
+    def save_edit(self):
+        call, old = self.val["call"], self.edit
+        if not is_call(call):
+            self.msg = "Not a valid callsign."
+            return
+        fields = {"call": call, "exch_r": self.val["exch"].strip(),
+                  "rst_s": self.val["rst_s"] or old["rst_s"],
+                  "rst_r": self.val["rst_r"] or old["rst_r"]}
+        if call != old["call"]:        # name etc. belonged to the old callsign
+            info = self.qrz.info(call) or {}
+            fields.update(name=info.get("name", ""), qth=info.get("qth", ""),
+                          grid=info.get("grid", ""),
+                          country=info.get("country", ""))
+        self.log.update(old["id"], **fields)
+        self.clear()
+        self.msg = f"Saved QSO #{old['id']} ({call})"
+
     def enter(self):
         call = self.val["call"]
-        if self.focus == 0 and parse_freq(call) and not is_call(call):
+        if self.edit:
+            self.save_edit()
+        elif self.focus == 0 and parse_freq(call) and not is_call(call):
             self.set_freq(parse_freq(call))
             self.val["call"] = ""
         elif self.focus == 0 and call in TYPED_MODES:
@@ -707,16 +771,22 @@ class App:
             self.export("adif")
         elif ch == curses.KEY_F3:
             self.export("cabrillo")
+        elif ch == curses.KEY_UP:
+            self.select(-1)
+        elif ch == curses.KEY_DOWN:
+            self.select(+1)
         elif ch == curses.KEY_F8:
-            rows = self.log.rows(last=1)
+            rows = [self.edit] if self.edit else self.log.rows(last=1)
             if rows:
-                self.msg = f"Delete last QSO with {rows[0]['call']}? (y/N)"
+                which = "QSO #%d" % rows[0]["id"] if self.edit else "last QSO"
+                self.msg = f"Delete {which} with {rows[0]['call']}? (y/N)"
                 self.draw(scr)
                 scr.timeout(-1)
                 answer = scr.get_wch()
                 scr.timeout(200)
                 if answer in ("y", "Y"):
-                    self.log.delete_last()
+                    self.log.delete(rows[0]["id"])
+                    self.clear()
                     self.msg = "Deleted."
                 else:
                     self.msg = "Kept."
@@ -775,14 +845,23 @@ class App:
             curses.A_BOLD)
         space = max(h - 11, 1)
         per_qso = self.score()["per_qso"]
-        for i, q in enumerate(self.log.rows(last=space)):
+        rows = self.log.rows()
+        end = len(rows)
+        if self.edit:                    # keep the edited QSO in view
+            ids = [q["id"] for q in rows]
+            if self.edit["id"] in ids:
+                end = max(min(ids.index(self.edit["id"]) + 1 + space // 2,
+                              len(rows)), min(space, len(rows)))
+        for i, q in enumerate(rows[max(end - space, 0):end]):
             points, is_dupe, is_mult = per_qso.get(q["id"], (0, False, False))
             pts = "DUPE" if is_dupe else f"{points}{'+M' if is_mult else ''}"
             put(3 + i, 1,
                 f"{q['id']:>4} {q['ts'][:16]:<16} {q['call']:<13} "
                 f"{(q['freq_hz'] or 0) / 1000:>9.1f} {q['mode']:<5}"
                 f"{q['rst_s']:<5}{q['exch_s']:<7}{q['rst_r']:<5}"
-                f"{q['exch_r']:<10}{pts:<6}{q['name']}")
+                f"{q['exch_r']:<10}{pts:<6}{q['name']}",
+                curses.A_REVERSE if self.edit and q["id"] == self.edit["id"]
+                else 0)
 
         call = self.val["call"]
         info = self.qrz.info(call) if is_call(call) else None
@@ -822,9 +901,9 @@ class App:
         put(h - 4, x, self.exch_sent() or "-")
 
         put(h - 2, 1, self.msg)
-        put(h - 1, 0, " Enter log | Tab next | Space call>exch | Esc clear | "
+        put(h - 1, 0, " Enter log | Tab next | Space call>exch | Esc clear | Up edit | "
                       "<kHz> Enter = QSY | CW/SSB/FM Enter = mode | F2 ADIF | "
-                      "F3 Cabrillo | F8 del last | F10 quit ".ljust(w - 1),
+                      "F3 Cabrillo | F8 delete | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
         try:
             scr.move(*cursor)

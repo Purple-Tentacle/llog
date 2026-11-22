@@ -140,8 +140,18 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
 | F2 | Export ADIF (`<logfile>.adi`) |
 | F3 | Export Cabrillo (`<CALL>-<date>-1.cbr`) |
-| F8 | Delete last QSO |
+| Up / Down | Edit a logged QSO (see below) |
+| F8 | Delete the last QSO, or the selected one while editing |
 | F10 or Ctrl-X | Quit |
+
+### Editing a QSO
+
+With an empty entry line, cursor Up loads the last QSO into the entry line;
+Up and Down move through the log, and Down past the last QSO returns to new
+QSO entry. Callsign, both reports and the received exchange can be changed.
+Enter saves, Esc cancels, F8 deletes the selected QSO. Moving to another QSO
+with Up or Down discards unsaved changes. Time, frequency and mode of a
+logged QSO are not editable.
 
 Exports also work without the UI:
 
