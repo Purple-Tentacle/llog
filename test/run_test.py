@@ -78,6 +78,7 @@ port = {port}
 [cluster]
 host = 127.0.0.1
 port = {csrv.getsockname()[1]}
+call = da2it-1
 """)
 EX = os.path.join(os.path.dirname(HERE), "examples")
 open(os.path.join(work, "contests", "wsa.ini"), "w").write(
@@ -235,7 +236,7 @@ assert "CLAIMED-SCORE: 44" in open(os.path.join(work, "DA2IT-" +
 import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
 assert b"Mults" in txt and b"NOTO" in txt and b"O55" in txt
-assert b"DX cluster" in txt and b"K1ABC" in txt and state["cluster_login"].startswith(b"DA2IT\r\n")
+assert b"DX cluster" in txt and b"K1ABC" in txt and state["cluster_login"].startswith(b"DA2IT-1\r\n")
 cl = m.Cluster("", 0, "DA2IT")
 cl.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
 cl.feed("DX de DL2BBB-#:    7030.5  DK9ZZ        cq                             2154Z")

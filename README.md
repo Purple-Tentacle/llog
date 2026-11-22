@@ -91,9 +91,11 @@ Add the node to `config.ini`:
 host = dxspider.co.uk
 port = 7300
 minutes = 30
+call =
 ```
 
-llog connects by telnet, logs in with your callsign, asks the node for its
+llog connects by telnet, logs in with `call` (your station callsign if left
+empty; some nodes want a login like `DA2IT-1` for a second connection), asks the node for its
 last 50 spots (`sh/dx 50`) and then collects new spots as they arrive. Spots
 of all bands are kept in memory for `minutes`, so changing band only changes
 what is displayed; nothing is fetched again. The panel needs a terminal at

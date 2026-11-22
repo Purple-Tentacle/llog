@@ -704,7 +704,8 @@ def load_config(config_dir, contest):
                    "qrz": {"username": "", "password": ""},
                    "rig": {"host": "127.0.0.1", "port": "4532",
                            "vfo_switch": "retune", "tune_command": "auto"},
-                   "cluster": {"host": "", "port": "7300", "minutes": "30"},
+                   "cluster": {"host": "", "port": "7300", "minutes": "30",
+                               "call": ""},
                    "contest": {"contest": "", "exchange_sent": "",
                                "category_operator": "SINGLE-OP",
                                "email": "", "specific": "",
@@ -810,7 +811,9 @@ class App:
         self.qrz = Qrz(os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
                        os.environ.get("QRZ_PASSWORD", cfg["qrz"]["password"]))
         self.cluster = Cluster(cfg["cluster"]["host"].strip(),
-                               cfg["cluster"].getint("port"), self.mycall,
+                               cfg["cluster"].getint("port"),
+                               cfg["cluster"]["call"].strip().upper()
+                               or self.mycall,
                                cfg["cluster"].getint("minutes"))
         # one entry row per VFO
         self.entry = {v: {"val": dict.fromkeys(FIELDS, ""), "focus": 0,
