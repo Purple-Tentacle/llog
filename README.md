@@ -126,6 +126,12 @@ mkdir -p ~/.config/llog/contests
 cp examples/wna.ini examples/wsa.ini ~/.config/llog/contests/
 ```
 
+Multipliers that are named explicitly in the contest file (`WN`, `O05`, ...)
+are listed in a panel below the QSO list, with the ones already worked
+highlighted in green and a `worked/total` count. With `mult_per = band` the
+panel shows the band the radio is on. Multipliers given as a pattern such as
+`N[0-9][0-9]` are scored but not listed.
+
 The score is your claimed score; the organiser's evaluation is what counts.
 
 ## Keys

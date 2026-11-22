@@ -1,5 +1,5 @@
 """End-to-end test: fake rigctld + the real UI driven through a pty."""
-import os, pty, select, socket, sqlite3, sys, threading, time, importlib.util
+import configparser, os, pty, select, socket, sqlite3, sys, threading, time, importlib.util
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.join(os.path.dirname(HERE), "llog.py")
@@ -133,7 +133,6 @@ assert d(R(exchange=True)) and d(R(exchange=True), exch="N01")
 assert not d(R(exchange=True), exch="N02")                   # moved: new exchange
 assert d(R(minutes=30)) and not d(R(minutes=15))             # 20 minutes ago
 # scoring with the shipped example files
-import configparser
 def rules_for(name):
     c = configparser.ConfigParser(); c.read(os.path.join(EX, name))
     return m.dupe_rules(c), m.score_rules(c)
@@ -162,4 +161,13 @@ assert "CLAIMED-SCORE: 24" in open(os.path.join(work, "DA2IT-" +
     datetime.now(timezone.utc).strftime("%Y-%m-%d") + "-1.cbr")).read()
 import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
+assert b"Mults" in txt and b"NOTO" in txt and b"O55" in txt
+app = m.App.__new__(m.App)                      # panel logic without a terminal
+c = configparser.ConfigParser(); c.read(os.path.join(EX, "wna.ini"))
+app.scoring = m.score_rules(c); app.freq = lambda: V
+app.score = lambda: {"seen": {("2m", "WN"), ("70cm", "DVN"), ("2m", "N01")}}
+panel = app.mult_panel(30)
+flat = [item for row in panel for item in row]
+assert flat[0] == ("Mults 2m 1/8:", False), flat          # N[0-9][0-9] not listed
+assert ("WN", True) in flat and ("DVN", False) in flat and len(panel) > 1
 print("ALL OK")

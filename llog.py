@@ -866,6 +866,29 @@ class App:
             self.dupe_ok = ""
         return True
 
+    def mult_panel(self, width):
+        """Rows of (text, worked) for the multipliers named in the contest
+        file. Patterns such as N[0-9][0-9] are not listed."""
+        names = [m for m in self.scoring["mults"]
+                 if not any(c in m for c in "*?[")]
+        if not names:
+            return []
+        per_band = self.scoring["mult_per"] == "band"
+        band = band_of(self.freq() or 0) if per_band else ""
+        seen = self.score()["seen"]
+        done = sum((band, m) in seen for m in names)
+        label = f"Mults {band or '?'}" if per_band else "Mults"
+        rows, row, used = [], [(f"{label} {done}/{len(names)}:", False)], 0
+        used = len(row[0][0]) + 1
+        for m in names:
+            if used + len(m) + 1 > width:
+                rows.append(row)
+                row, used = [], 0
+            row.append((m, (band, m) in seen))
+            used += len(m) + 1
+        rows.append(row)
+        return rows
+
     def score_text(self):
         if not self.scoring["configured"]:
             return ""
@@ -896,7 +919,16 @@ class App:
         put(2, 1, f"{'#':>4} {'UTC':<16} {'Call':<13} {'kHz':>9} {'Mode':<5}"
                   f"{'Sent':<5}{'Exch':<7}{'Rcvd':<5}{'Exch':<10}{'Pts':<6}Name",
             curses.A_BOLD)
-        space = max(h - 11, 1)
+        mult_rows = self.mult_panel(w - 2)
+        if h - 12 - len(mult_rows) < 3:      # terminal too small for the panel
+            mult_rows = []
+        space = max(h - 11 - (len(mult_rows) + 1 if mult_rows else 0), 1)
+        for n, row in enumerate(mult_rows):
+            x = 1
+            for text, worked in row:
+                put(h - 8 - len(mult_rows) + n, x, text,
+                    self.good_attr if worked else 0)
+                x += len(text) + 1
         per_qso = self.score()["per_qso"]
         rows = self.log.rows()
         end = len(rows)
