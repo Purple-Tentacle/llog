@@ -92,7 +92,8 @@ EX = os.path.join(os.path.dirname(HERE), "examples")
 open(os.path.join(work, "contests", "wsa.ini"), "w").write(
     open(os.path.join(EX, "wsa.ini")).read()
     .replace("exchange_sent =", "exchange_sent = N99")
-    .replace("specific =", "specific = N99"))
+    .replace("specific =", "specific = N99")
+    .replace("locator =", "locator = JO31AA"))
 
 pid, fd = pty.fork()
 if pid == 0:
@@ -116,7 +117,7 @@ send("dl1abc/p\r"); assert b"DUPE" in screen                 # dupe: 1st Enter w
 send("\x1b")                                                 # Esc, not logged
 send("7030.5\r", 1.2)                                         # QSY via logger
 send("ssb\r", 1.2)                                            # mode via logger
-send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\r")    # QSO 2 with RSTs
+send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\t"); send("jo40\r")   # QSO 2 with RSTs and locator
 send("oops1x\r"); send("\x1b[19~"); send("y")                 # QSO 3, F8 delete
 UP, BTAB = "\x1bOA", "\x1b[Z"
 send("dl9"); send(UP)                                         # typed text stays in row
@@ -198,6 +199,30 @@ assert rig.vfo_mode and rig.online and rig.freq == {"A": 144300000, "B": 4322000
 rig.set_freq("B", 433500000); time.sleep(1)
 assert "F VFOB 433500000" in vstate["cmds"] and rig.freq["B"] == 433500000
 rig.select("B"); time.sleep(1); assert "V VFOB" in vstate["cmds"]
+# locators and distance
+assert m.is_locator("jo31") and m.is_locator("JO31AA") and m.is_locator("JO31AA55")
+assert not m.is_locator("JO3") and not m.is_locator("ZZ99") and not m.is_locator("")
+lat, lon = m.locator_position("JO31AA")
+assert abs(lat - 51.0208) < 0.001 and abs(lon - 6.0417) < 0.001
+assert m.distance_km("JO31AA", "JO31AA") == 0 and m.distance_km("JO31AA", "") is None
+assert 138 <= m.distance_km("JO31AA", "JO41AA") <= 142       # 2 degrees east at 51N
+assert sqlite3.connect(db).execute(
+    "SELECT grid FROM qso WHERE call='DK2XYZ'").fetchone()[0] == "JO40"
+adif = open(os.path.join(work, "t.adi")).read()
+assert "<MY_GRIDSQUARE:6>JO31AA" in adif and "<GRIDSQUARE:4>JO40" in adif
+assert f"<DISTANCE:3>{m.distance_km('JO31AA', 'JO40')}" in adif
+# locator pre-fill from the QRZ lookup
+tcfg = m.load_config(work, "wsa")
+app2 = m.App(tcfg, m.Log(os.path.join(work, "l.db")))
+app2.qrz.cache["DL5ABC"] = {"name": "A", "qth": "", "country": "", "grid": "JO40ab"}
+app2.val["call"] = "DL5ABC"; app2.sync_locators()
+assert app2.val["loc"] == "JO40AB" and app2.my_loc == "JO31AA"
+app2.val["call"] = "DL5ABD"; app2.sync_locators(); assert app2.val["loc"] == ""
+app2.val["call"] = "DL5ABC"; app2.sync_locators(); app2.focus = 4
+for _ in range(6): app2.entry_key("\x7f")                     # user empties the field
+app2.sync_locators(); assert app2.val["loc"] == ""             # stays empty
+for ch in "jn58": app2.entry_key(ch)
+app2.sync_locators(); assert app2.val["loc"] == "JN58"         # typed: not overwritten
 # dupe rules
 from datetime import datetime, timezone, timedelta
 lg = m.Log(os.path.join(work, "d.db"))

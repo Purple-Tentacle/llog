@@ -8,6 +8,7 @@ One Python file, standard library only, nothing to compile.
 - Typing a frequency in the logger tunes the radio
 - Two entry rows with their own frequency and mode
 - DX cluster panel with the spots on the current band
+- Locator field with distance to each station
 - SQLite log file, ADIF and Cabrillo export
 
 Dupe checking and scoring are configurable per contest.
@@ -130,7 +131,7 @@ Station data and contest data live in separate files under `~/.config/llog/`:
 | File | Content |
 | --- | --- |
 | `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port, `vfo_switch`, `tune_command`, DX cluster node |
-| `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, dupe rules, scoring |
+| `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, your locator, dupe rules, scoring |
 
 Both are created by a few questions the first time they are needed: the
 station file on the very first start, a contest file the first time you start
@@ -139,6 +140,26 @@ An `email` entry in a contest file overrides the station e-mail.
 
 The QRZ password is stored in `config.ini` in plain text (file mode 600); the
 environment variables `QRZ_USERNAME` and `QRZ_PASSWORD` override the file.
+
+## Locator and distance
+
+Each entry row has a locator field. After the QRZ lookup (Tab or Space after
+the callsign) it is filled with the locator from QRZ; type over it if the
+station gives a different one, for example when portable. A locator you typed
+or emptied by hand is not overwritten for that callsign.
+
+Set your own locator in the contest file:
+
+```
+locator = JO31AA
+```
+
+The QSO list then shows the distance in km for every QSO that has a locator,
+and the QRZ line shows it for the station you are entering. The distance is
+the great-circle distance between the centres of the two locators (4, 6 or 8
+characters). The locator of a logged QSO can be changed in the list like any
+other cell. The ADIF export contains `GRIDSQUARE`, `MY_GRIDSQUARE` and
+`DISTANCE`.
 
 ## Dupe checking
 

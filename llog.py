@@ -12,6 +12,7 @@ import configparser
 import curses
 import fnmatch
 import getpass
+import math
 import os
 import queue
 import re
@@ -89,6 +90,52 @@ def is_call(text):
 def base_call(call):
     """DL1ABC/P -> DL1ABC, EA8/DL1ABC -> DL1ABC."""
     return max(call.split("/"), key=len)
+
+
+LOCATOR_RE = re.compile(r"^[A-R]{2}[0-9]{2}([A-X]{2}([0-9]{2})?)?$")
+
+
+def is_locator(text):
+    return bool(LOCATOR_RE.match((text or "").upper()))
+
+
+def locator_position(locator):
+    """(latitude, longitude) of the centre of a Maidenhead locator."""
+    loc = locator.upper()
+    lon = (ord(loc[0]) - 65) * 20 - 180 + int(loc[2]) * 2
+    lat = (ord(loc[1]) - 65) * 10 - 90 + int(loc[3])
+    if len(loc) >= 6:
+        lon += (ord(loc[4]) - 65) * 5 / 60
+        lat += (ord(loc[5]) - 65) * 2.5 / 60
+        if len(loc) >= 8:
+            lon += int(loc[6]) * 0.5 / 60 + 0.25 / 60
+            lat += int(loc[7]) * 0.25 / 60 + 0.125 / 60
+        else:
+            lon += 2.5 / 60
+            lat += 1.25 / 60
+    else:
+        lon += 1
+        lat += 0.5
+    return lat, lon
+
+
+def distance_km(loc_a, loc_b):
+    """Great-circle distance between two locators in km, or None."""
+    if not (is_locator(loc_a) and is_locator(loc_b)):
+        return None
+    lat1, lon1 = map(math.radians, locator_position(loc_a))
+    lat2, lon2 = map(math.radians, locator_position(loc_b))
+    a = (math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2)
+         * math.sin((lon2 - lon1) / 2) ** 2)
+    return round(2 * 6371 * math.asin(math.sqrt(a)))
+
+
+def my_locator(cfg):
+    loc = cfg["contest"].get("locator", "").strip().upper()
+    if loc and not is_locator(loc):
+        sys.exit(f"locator = {loc} in the contest file is not a valid locator "
+                 "(e.g. JO31 or JO31AA)")
+    return loc
 
 
 def mode_group(mode):
@@ -645,7 +692,7 @@ class Log:
         return None
 
     # ---- exports
-    def export_adif(self, path):
+    def export_adif(self, path, my_loc=""):
         def field(name, value):
             value = ascii_only(str(value))
             return f"<{name}:{len(value)}>{value} " if value else ""
@@ -669,6 +716,8 @@ class Log:
                     + field("STATION_CALLSIGN", q["mycall"])
                     + field("NAME", q["name"]) + field("QTH", q["qth"])
                     + field("GRIDSQUARE", q["grid"])
+                    + field("MY_GRIDSQUARE", my_loc)
+                    + field("DISTANCE", distance_km(my_loc, q["grid"]) or "")
                     + field("COUNTRY", q["country"]) + "<EOR>\n")
         return path
 
@@ -748,7 +797,7 @@ def load_config(config_dir, contest):
                                "dupe_exchange": "no",
                                "dupe_minutes": "0",
                                "points": "", "multipliers": "",
-                               "mult_per": "band"}})
+                               "mult_per": "band", "locator": ""}})
     station_file = os.path.join(config_dir, "config.ini")
     if os.path.exists(station_file):
         cfg.read(station_file)
@@ -782,6 +831,9 @@ def load_config(config_dir, contest):
             "SPECIFIC header (own DOK for DARC contests, '-' = none)",
             con["exchange_sent"] if con["exchange_sent"] != "#" else ""
         ).upper()
+        con["locator"] = ask(
+            "Your locator for this contest, e.g. JO31AA ('-' = none)",
+            con["locator"]).upper()
         con["dupe_check"] = ask(
             "Dupe check: band / band_mode / mode / once / off",
             con["dupe_check"]).lower()
@@ -800,14 +852,14 @@ def load_config(config_dir, contest):
 
 
 # ---------------------------------------------------------------------- ui
-FIELDS = ("call", "rst_s", "rst_r", "exch")           # entry row fields
+FIELDS = ("call", "rst_s", "rst_r", "exch", "loc")    # entry row fields
 LABELS = {"call": "Call", "rst_s": "Sent", "rst_r": "Rcvd",
-          "exch": "Exchange rcvd"}
-WIDTHS = {"call": 14, "rst_s": 5, "rst_r": 5, "exch": 20}
+          "exch": "Exchange rcvd", "loc": "Locator"}
+WIDTHS = {"call": 14, "rst_s": 5, "rst_r": 5, "exch": 20, "loc": 8}
 # QSO list columns; a logged QSO is edited in place in these cells
 COLUMNS = (("ts", 19, "UTC"), ("call", 13, "Call"), ("freq", 9, "kHz"),
            ("mode", 5, "Mode"), ("rst_s", 4, "Sent"), ("exch_s", 7, "Exch"),
-           ("rst_r", 4, "Rcvd"), ("exch", 12, "Exch"))
+           ("rst_r", 4, "Rcvd"), ("exch", 12, "Exch"), ("loc", 8, "Locator"))
 SPACE_OK = ("exch", "exch_s", "ts")      # cells that may contain a space
 ENTRY_X = 26                             # column where the entry fields start
 
@@ -830,7 +882,7 @@ def cells(q):
     """Text of the list cells of one QSO."""
     return {"ts": q["ts"], "call": q["call"], "freq": khz_text(q["freq_hz"]),
             "mode": q["mode"], "rst_s": q["rst_s"], "exch_s": q["exch_s"],
-            "rst_r": q["rst_r"], "exch": q["exch_r"]}
+            "rst_r": q["rst_r"], "exch": q["exch_r"], "loc": q["grid"]}
 
 
 class App:
@@ -850,8 +902,8 @@ class App:
                                or self.mycall,
                                cfg["cluster"].getint("minutes"))
         # one entry row per VFO
-        self.entry = {v: {"val": dict.fromkeys(FIELDS, ""), "focus": 0,
-                          "dupe_ok": ""} for v in "AB"}
+        self.my_loc = my_locator(cfg)
+        self.entry = {v: self.new_entry() for v in "AB"}
         self.row = "A"
         self.manual_freq = {"A": 0, "B": 0}
         self.manual_mode = {"A": "SSB", "B": "SSB"}
@@ -903,9 +955,29 @@ class App:
         sent = self.cfg["contest"]["exchange_sent"]
         return f"{self.log.count() + 1:03d}" if sent == "#" else sent
 
+    @staticmethod
+    def new_entry():
+        # loc_for: callsign whose QRZ locator was filled in automatically
+        # loc_manual: callsign for which the locator was edited by hand
+        return {"val": dict.fromkeys(FIELDS, ""), "focus": 0, "dupe_ok": "",
+                "loc_for": "", "loc_manual": ""}
+
     def clear(self):
-        self.entry[self.row] = {"val": dict.fromkeys(FIELDS, ""), "focus": 0,
-                                "dupe_ok": ""}
+        self.entry[self.row] = self.new_entry()
+
+    def sync_locators(self):
+        """Fills the locator field from the QRZ lookup. A locator that was
+        typed by hand is never overwritten."""
+        for entry in self.entry.values():
+            val = entry["val"]
+            if entry["loc_for"] and entry["loc_for"] != val["call"]:
+                val["loc"], entry["loc_for"] = "", ""   # belonged to another call
+            if (val["loc"] or not is_call(val["call"])
+                    or entry["loc_manual"] == val["call"]):
+                continue
+            grid = (self.qrz.info(val["call"]) or {}).get("grid", "")
+            if is_locator(grid):
+                val["loc"], entry["loc_for"] = grid.upper()[:8], val["call"]
 
     def dupe(self):
         if self.edit:      # compare with the QSOs made before the edited one
@@ -984,6 +1056,8 @@ class App:
             self.msg = "Not a valid callsign."
         elif not self.freq():
             self.msg = "No frequency: start rigctld or type one (kHz) + Enter."
+        elif self.val["loc"] and not is_locator(self.val["loc"]):
+            self.msg = "Locator is not valid (e.g. JO31 or JO31AA) - fix or clear it."
         elif self.dupe() and self.dupe_ok != call:
             self.dupe_ok = call
             self.msg = self.dupe_text(self.dupe()) + " - Enter again logs it anyway."
@@ -997,7 +1071,7 @@ class App:
                 rst_r=self.val["rst_r"] or self.default_rst(),
                 exch_s=self.exch_sent(), exch_r=self.val["exch"].strip(),
                 name=info.get("name", ""), qth=info.get("qth", ""),
-                grid=info.get("grid", ""), country=info.get("country", ""))
+                grid=self.val["loc"], country=info.get("country", ""))
             self.msg = f"Logged {call} in row {self.row}"
             self.clear()
 
@@ -1009,7 +1083,7 @@ class App:
         stem = os.path.splitext(self.log.path)[0]
         try:
             if kind == "adif":
-                path = self.log.export_adif(stem + ".adi")
+                path = self.log.export_adif(stem + ".adi", self.my_loc)
             else:
                 rows = self.log.rows()
                 day = rows[0]["ts"][:10] if rows else "empty"
@@ -1060,7 +1134,10 @@ class App:
 
     def save_edit(self):
         call, old, new = self.eval["call"], self.edit, self.edited()
+        loc = self.eval["loc"].strip()
         problem = ("Not a valid callsign." if not is_call(call) else
+                   "Locator is not valid (e.g. JO31 or JO31AA)."
+                   if loc and not is_locator(loc) else
                    "Frequency must be a number in kHz, e.g. 144300."
                    if "freq_hz" not in new else
                    "Mode must be letters/digits, e.g. CW, SSB, FM."
@@ -1071,13 +1148,12 @@ class App:
             self.msg = problem
             return
         fields = dict(new, call=call, exch_r=self.eval["exch"].strip(),
-                      exch_s=self.eval["exch_s"].strip(),
+                      exch_s=self.eval["exch_s"].strip(), grid=loc,
                       rst_s=self.eval["rst_s"] or old["rst_s"],
                       rst_r=self.eval["rst_r"] or old["rst_r"])
         if call != old["call"]:        # name etc. belonged to the old callsign
             info = self.qrz.info(call) or {}
             fields.update(name=info.get("name", ""), qth=info.get("qth", ""),
-                          grid=info.get("grid", ""),
                           country=info.get("country", ""))
         self.log.update(old["id"], **fields)
         self.edit = None
@@ -1123,10 +1199,14 @@ class App:
         elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
             self.val[name] = self.val[name][:-1]
             self.dupe_ok = ""
+            if name == "loc":                           # now typed by hand
+                self.entry[self.row].update(loc_for="", loc_manual=self.val["call"])
         elif isinstance(ch, str) and ch.isprintable():
             if len(self.val[name]) < WIDTHS[name]:
                 self.val[name] += ch.upper()
             self.dupe_ok = ""
+            if name == "loc":
+                self.entry[self.row].update(loc_for="", loc_manual=self.val["call"])
 
     def key(self, scr, ch):
         """Returns False to quit."""
@@ -1312,7 +1392,7 @@ class App:
         # QSO list, with the edited QSO shown as editable cells
         put(2, 1, f"{'#':>4} " + " ".join(f"{title:<{width}}"
                                           for _, width, title in COLUMNS)
-            + f" {'Pts':<6}Name", curses.A_BOLD)
+            + f" {'km':>5} {'Pts':<6}Name", curses.A_BOLD)
         mult_rows = self.mult_panel(w - 2)
         if h - 13 - len(mult_rows) < 3:      # terminal too small for the panel
             mult_rows = []
@@ -1324,7 +1404,7 @@ class App:
                     self.good_attr if worked else 0)
                 x += len(text) + 1
         # DX cluster panel to the right of the QSO list
-        panel_x = w - 30 if self.cluster.host and w >= 126 else None
+        panel_x = w - 30 if self.cluster.host and w >= 140 else None
         if panel_x:
             put(2, panel_x, f"DX cluster {band_of(self.freq() or 0) or '?'}",
                 curses.A_BOLD)
@@ -1368,7 +1448,8 @@ class App:
                         cursor = (3 + i, x + min(len(texts[name]), width - 1))
                 put(3 + i, x, texts[name][:width].ljust(width), attr)
                 x += width + 1
-            tail = f"{pts:<6}{q['name']}"
+            km = distance_km(self.my_loc, texts["loc"])
+            tail = f"{'' if km is None else km:>5} {pts:<6}{q['name']}"
             put(3 + i, x, tail[:panel_x - x - 2] if panel_x else tail)
 
         # hints for the active entry row (or the edited QSO)
@@ -1386,6 +1467,10 @@ class App:
             line = "QRZ: " + "  |  ".join(
                 x for x in (info["name"], info["qth"], info["country"],
                             info["grid"]) if x)
+        loc = self.eval["loc"] if self.edit else self.val["loc"]
+        km = distance_km(self.my_loc, loc)
+        if km is not None:
+            line += f"   [{loc}: {km} km]"
         put(h - 8, 1, line, curses.A_BOLD)
         dupe = self.dupe()
         if dupe:
@@ -1458,6 +1543,7 @@ class App:
                 self.row = self.rig.vfo      # A/B was pressed on the radio
             if self.rig.tune_info:
                 self.msg, self.rig.tune_info = self.rig.tune_info, ""
+            self.sync_locators()
             if self.cluster.reply:
                 self.msg, self.cluster.reply = self.cluster.reply, ""
             self.draw(scr)
@@ -1500,12 +1586,13 @@ def main():
         args.logfile = stem + ".db"
     dupes, scoring = dupe_rules(cfg), score_rules(cfg)   # fail early
     rig_retune(cfg)
+    my_locator(cfg)
     log = Log(args.logfile)
     if args.score:
         print(score_report(compute_score(log.rows(), dupes, scoring), scoring))
     if args.score or args.export_adif or args.export_cabrillo:
         if args.export_adif:
-            print("ADIF:", log.export_adif(args.export_adif))
+            print("ADIF:", log.export_adif(args.export_adif, my_locator(cfg)))
         if args.export_cabrillo:
             print("Cabrillo:", log.export_cabrillo(args.export_cabrillo, cfg))
         return
