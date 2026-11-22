@@ -779,9 +779,9 @@ class App:
         self.manual_freq[self.row] = hz
         if self.rig.online:
             self.rig.set_freq(self.row, hz)
-            self.msg = f"VFO {self.row} set to {fmt_freq(hz)}"
+            self.msg = f"Row {self.row} set to {fmt_freq(hz)}"
         else:
-            self.msg = (f"Rig offline - VFO {self.row} frequency set manually "
+            self.msg = (f"Rig offline - row {self.row} frequency set manually "
                         f"to {fmt_freq(hz)}")
 
     def set_mode(self, mode):
@@ -791,7 +791,7 @@ class App:
             if mode == "SSB":
                 hamlib = "LSB" if self.freq() < 10_000_000 else "USB"
             self.rig.set_mode(self.row, hamlib)
-        self.msg = f"VFO {self.row} mode {mode}"
+        self.msg = f"Row {self.row} mode {mode}"
 
     def switch_row(self):
         self.row = "B" if self.row == "A" else "A"
@@ -825,7 +825,7 @@ class App:
                 exch_s=self.exch_sent(), exch_r=self.val["exch"].strip(),
                 name=info.get("name", ""), qth=info.get("qth", ""),
                 grid=info.get("grid", ""), country=info.get("country", ""))
-            self.msg = f"Logged {call} on VFO {self.row}"
+            self.msg = f"Logged {call} in row {self.row}"
             self.clear()
 
     def leave_call_field(self):
@@ -1037,7 +1037,7 @@ class App:
         rig = "RIG ok" if self.rig.online else "RIG offline (manual)"
         utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") + "Z"
         head = (f" {self.mycall} {self.cfg['contest']['contest']} | "
-                f"VFO {self.row} {band_of(self.freq() or 0) or '-'} "
+                f"Row {self.row} {band_of(self.freq() or 0) or '-'} "
                 f"{self.mode()} | {rig} | {self.score_text()}"
                 f"QSOs: {self.log.count()} | {utc} ")
         put(0, 0, head.ljust(w - 1), curses.A_REVERSE)
@@ -1107,7 +1107,7 @@ class App:
                 self.good_attr | curses.A_BOLD)
 
         # two entry rows, one per VFO
-        put(h - 6, 1, "VFO   Frequency  Mode")
+        put(h - 6, 1, "Row   Frequency  Mode")
         x = ENTRY_X
         for name in FIELDS:
             put(h - 6, x, LABELS[name])
@@ -1134,7 +1134,7 @@ class App:
             put(line, x, self.exch_sent() or "-")
 
         put(h - 2, 1, self.msg)
-        put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ VFO A/B | "
+        put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
                       "<kHz> or <mode> Enter = QSY | Up edit | F2 ADIF | "
                       "F3 Cabrillo | F8 delete | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
