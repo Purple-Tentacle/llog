@@ -74,15 +74,15 @@ send("ssb\r", 1.2)                                            # mode via logger
 send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\r")    # QSO 2 with RSTs
 send("oops1x\r"); send("\x1b[19~"); send("y")                 # QSO 3, F8 delete
 UP = "\x1bOA"
-send(UP); send("\t\t\t"); send("\x7f\x7f"); send("o05")         # edit QSO 2 exchange,
-send("\t\t"); send("\x7f" * 6); send("7040\t")                 # frequency,
-send("\x7f" * 3); send("cw\t"); send("\x7f" * 2); send("\r")     # mode; bad time refused
-assert b"Time must look like" in screen
-send("59\r")                                                  # time fixed, saved
+send(UP); send("\t\t\t"); send("\x7f\x7f"); send("o05\r")      # edit QSO 2 exchange
 send(UP); send(UP); send("x"); send("\x1b")                   # edit QSO 1, cancel
 send("oops2x\r"); send(UP); send("\x1b[19~"); send("y")        # delete selected QSO
 send("zz\x7f\x7f")
 send(UP); send(UP); send("\x7f\x7f"); send("\r")               # QSO 1: DL1ABC/P -> DL1ABC
+send(UP); send("\t" * 5); send("\x7f" * 6); send("7040\t")      # QSO 2: frequency,
+send("\x7f" * 3); send("cw\t"); send("\x7f" * 2); send("\r")     # mode; bad time refused
+assert b"Time must look like" in screen
+send("59\r")                                                  # time fixed, saved
 send("\x1bOQ"); send("\x1bOR")                            # F2, F3 exports
 send("\x1b[21~", 1.0)                                         # F10 quit
 os.waitpid(pid, 0)
