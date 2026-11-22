@@ -148,10 +148,15 @@ The score is your claimed score; the organiser's evaluation is what counts.
 
 With an empty entry line, cursor Up loads the last QSO into the entry line;
 Up and Down move through the log, and Down past the last QSO returns to new
-QSO entry. Callsign, both reports and the received exchange can be changed.
+QSO entry. While editing, the entry line has extra fields, so every part of
+the QSO can be changed: callsign, both reports, received and sent exchange,
+frequency (kHz), mode and UTC date and time (`2026-12-01 18:45:00`). Tab and
+Shift-Tab move between the fields. The edit line needs a terminal about 105
+columns wide.
+
 Enter saves, Esc cancels, F8 deletes the selected QSO. Moving to another QSO
-with Up or Down discards unsaved changes. Time, frequency and mode of a
-logged QSO are not editable.
+with Up or Down discards unsaved changes. The log is kept in time order, so a
+QSO whose time was changed moves to its new place in the list and exports.
 
 Exports also work without the UI:
 

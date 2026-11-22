@@ -74,7 +74,11 @@ send("ssb\r", 1.2)                                            # mode via logger
 send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\r")    # QSO 2 with RSTs
 send("oops1x\r"); send("\x1b[19~"); send("y")                 # QSO 3, F8 delete
 UP = "\x1bOA"
-send(UP); send("\t\t\t"); send("\x7f\x7f"); send("o05\r")      # edit QSO 2 exchange
+send(UP); send("\t\t\t"); send("\x7f\x7f"); send("o05")         # edit QSO 2 exchange,
+send("\t\t"); send("\x7f" * 6); send("7040\t")                 # frequency,
+send("\x7f" * 3); send("cw\t"); send("\x7f" * 2); send("\r")     # mode; bad time refused
+assert b"Time must look like" in screen
+send("59\r")                                                  # time fixed, saved
 send(UP); send(UP); send("x"); send("\x1b")                   # edit QSO 1, cancel
 send("oops2x\r"); send(UP); send("\x1b[19~"); send("y")        # delete selected QSO
 send("zz\x7f\x7f")
@@ -87,7 +91,9 @@ rows = sqlite3.connect(db).execute(
     "SELECT call,freq_hz,mode,rst_s,rst_r,exch_s,exch_r FROM qso").fetchall()
 print(rows)
 assert rows == [("DL1ABC", 14060000, "CW", "599", "599", "N99", "O05"),
-                ("DK2XYZ", 7030500, "SSB", "57", "55", "N99", "O05")], rows
+                ("DK2XYZ", 7040000, "CW", "57", "55", "N99", "O05")], rows
+assert sqlite3.connect(db).execute(
+    "SELECT ts FROM qso WHERE call='DK2XYZ'").fetchone()[0].endswith(":59")
 assert "F 7030500" in state["cmds"] and "M LSB 0" in state["cmds"], state["cmds"][-20:]
 for name in sorted(os.listdir(work)):
     if name.endswith((".adi", ".cbr")):
@@ -103,6 +109,8 @@ s, c = m.parse_qrz('<?xml version="1.0"?><QRZDatabase version="1.34" '
 assert s["Key"] == "abc" and c["fname"] == "Jörg" and c["grid"] == "JO31"
 assert m.parse_freq("144300") == 144300000 and m.parse_freq("14.060") == 14060000
 assert m.cabrillo_freq(144300000) == "144" and m.cabrillo_freq(7030500) == "7030"
+assert m.parse_ts("2026-12-01 18:45") == "2026-12-01 18:45:00"
+assert m.parse_ts("18:45") is None and m.khz_text(7030500) == "7030.5"
 # dupe rules
 from datetime import datetime, timezone, timedelta
 lg = m.Log(os.path.join(work, "d.db"))
@@ -150,7 +158,7 @@ r = m.compute_score(rows(("DL1A", V, "CW", "O05"), ("DL1B", V, "FM", "NOTO"),
                          ("DL1E", U, "FM", "O05"), ("DL1F", V, "FM", "NM")),
                     dr, sr)
 assert (r["points"], r["mults"], r["score"]) == (18, 3, 54), r
-assert "CLAIMED-SCORE: 20" in open(os.path.join(work, "DA2IT-" +
+assert "CLAIMED-SCORE: 24" in open(os.path.join(work, "DA2IT-" +
     datetime.now(timezone.utc).strftime("%Y-%m-%d") + "-1.cbr")).read()
 import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt

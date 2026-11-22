@@ -373,7 +373,7 @@ class Log:
         return self.db.execute("SELECT COUNT(*) FROM qso").fetchone()[0]
 
     def rows(self, last=None):
-        sql = "SELECT id," + ",".join(self.COLS) + " FROM qso ORDER BY id"
+        sql = "SELECT id," + ",".join(self.COLS) + " FROM qso ORDER BY ts, id"
         rows = [dict(zip(("id",) + self.COLS, r)) for r in self.db.execute(sql)]
         return rows[-last:] if last else rows
 
@@ -388,15 +388,18 @@ class Log:
         self.db.commit()
 
     def find_dupe(self, rules, call, freq_hz, mode, exch="", now=None,
-                  before_id=None):
-        """Returns the earlier QSO that makes this one a dupe, or None."""
+                  before=None):
+        """before = (ts, id) of an edited QSO: only look at earlier ones."""
         if rules["check"] == "off":
             return None
         now = now or datetime.now(timezone.utc)
         found = self.db.execute(
             "SELECT ts, call, freq_hz, mode, exch_r FROM qso "
-            "WHERE call LIKE ? AND id < ? ORDER BY id DESC",
-            (f"%{base_call(call)}%", before_id or 1 << 62))
+            "WHERE call LIKE ? AND (ts < ? OR (ts = ? AND id < ?)) "
+            "ORDER BY ts DESC, id DESC",
+            (f"%{base_call(call)}%",) + (
+                (before[0], before[0], before[1]) if before
+                else ("9999", "9999", 0)))
         for ts, old_call, old_freq, old_mode, old_exch in found:
             if rules["ignore_suffix"]:
                 if base_call(old_call) != base_call(call):
@@ -571,8 +574,27 @@ def load_config(config_dir, contest):
 
 # ---------------------------------------------------------------------- ui
 FIELDS = ("call", "rst_s", "rst_r", "exch")
-LABELS = {"call": "Call", "rst_s": "Sent", "rst_r": "Rcvd", "exch": "Exchange rcvd"}
-WIDTHS = {"call": 14, "rst_s": 5, "rst_r": 5, "exch": 20}
+EDIT_FIELDS = FIELDS + ("exch_s", "freq", "mode", "ts")   # only while editing
+LABELS = {"call": "Call", "rst_s": "Sent", "rst_r": "Rcvd",
+          "exch": "Exchange rcvd", "exch_s": "Exch sent", "freq": "kHz",
+          "mode": "Mode", "ts": "UTC date and time"}
+WIDTHS = {"call": 14, "rst_s": 5, "rst_r": 5, "exch": 20, "exch_s": 8,
+          "freq": 10, "mode": 5, "ts": 19}
+SPACE_OK = ("exch", "exch_s", "ts")      # fields that may contain a space
+
+
+def parse_ts(text):
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(text.strip(), fmt).strftime(
+                "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            pass
+    return None
+
+
+def khz_text(hz):
+    return f"{(hz or 0) / 1000:.3f}".rstrip("0").rstrip(".")
 
 
 class App:
@@ -589,7 +611,7 @@ class App:
                        os.environ.get("QRZ_PASSWORD", cfg["qrz"]["password"]))
         self.manual_freq = 0
         self.manual_mode = "SSB"
-        self.val = dict.fromkeys(FIELDS, "")
+        self.val = dict.fromkeys(EDIT_FIELDS, "")
         self.focus = 0
         self.msg = "Type a callsign. Enter = log QSO."
 
@@ -609,8 +631,11 @@ class App:
         sent = self.cfg["contest"]["exchange_sent"]
         return f"{self.log.count() + 1:03d}" if sent == "#" else sent
 
+    def fields(self):
+        return EDIT_FIELDS if self.edit else FIELDS
+
     def clear(self):
-        self.val = dict.fromkeys(FIELDS, "")
+        self.val = dict.fromkeys(EDIT_FIELDS, "")
         self.focus = 0
         self.dupe_ok = ""
         self.edit = None
@@ -620,11 +645,13 @@ class App:
         if not is_call(call):
             return None
         if self.edit:      # compare with the QSOs made before the edited one
-            when = datetime.strptime(self.edit["ts"], "%Y-%m-%d %H:%M:%S")
+            new = self.edited()
+            ts = new.get("ts", self.edit["ts"])
+            when = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
             return self.log.find_dupe(
-                self.rules, call, self.edit["freq_hz"], self.edit["mode"],
-                self.val["exch"].strip(), when.replace(tzinfo=timezone.utc),
-                before_id=self.edit["id"])
+                self.rules, call, new.get("freq_hz", self.edit["freq_hz"]),
+                new.get("mode", self.edit["mode"]), self.val["exch"].strip(),
+                when.replace(tzinfo=timezone.utc), before=(ts, self.edit["id"]))
         return self.log.find_dupe(self.rules, call, self.freq(), self.mode(),
                                   self.val["exch"].strip())
 
@@ -637,7 +664,7 @@ class App:
 
     def new_mult(self):
         """Multiplier value if the exchange being typed is a new one."""
-        if not is_call(self.val["call"]):
+        if self.edit or not is_call(self.val["call"]):
             return None
         key = mult_key(self.scoring, self.val["exch"], self.freq())
         return key[1] if key and key not in self.score()["seen"] else None
@@ -691,18 +718,43 @@ class App:
         self.clear()
         self.edit, self.focus = rows[index], focus
         self.val = {"call": self.edit["call"], "rst_s": self.edit["rst_s"],
-                    "rst_r": self.edit["rst_r"], "exch": self.edit["exch_r"]}
+                    "rst_r": self.edit["rst_r"], "exch": self.edit["exch_r"],
+                    "exch_s": self.edit["exch_s"],
+                    "freq": khz_text(self.edit["freq_hz"]),
+                    "mode": self.edit["mode"], "ts": self.edit["ts"]}
         self.msg = (f"Editing QSO #{self.edit['id']} - Enter saves, Esc cancels, "
                     "Up/Down other QSO, F8 deletes it.")
 
+    def edited(self):
+        """Valid frequency/mode/time typed in edit mode; bad ones are left out."""
+        out, old = {}, self.edit
+        hz = parse_freq(self.val["freq"])
+        if self.val["freq"] == khz_text(old["freq_hz"]):
+            out["freq_hz"] = old["freq_hz"]      # untouched: keep exact value
+        elif hz:
+            out["freq_hz"] = hz
+        if self.val["mode"].isalnum():
+            out["mode"] = self.val["mode"]
+        if parse_ts(self.val["ts"]):
+            out["ts"] = parse_ts(self.val["ts"])
+        return out
+
     def save_edit(self):
-        call, old = self.val["call"], self.edit
-        if not is_call(call):
-            self.msg = "Not a valid callsign."
+        call, old, new = self.val["call"], self.edit, self.edited()
+        problem = ("Not a valid callsign." if not is_call(call) else
+                   "Frequency must be a number in kHz, e.g. 144300."
+                   if "freq_hz" not in new else
+                   "Mode must be letters/digits, e.g. CW, SSB, FM."
+                   if "mode" not in new else
+                   "Time must look like 2026-12-01 18:45:00 (UTC)."
+                   if "ts" not in new else "")
+        if problem:
+            self.msg = problem
             return
-        fields = {"call": call, "exch_r": self.val["exch"].strip(),
-                  "rst_s": self.val["rst_s"] or old["rst_s"],
-                  "rst_r": self.val["rst_r"] or old["rst_r"]}
+        fields = dict(new, call=call, exch_r=self.val["exch"].strip(),
+                      exch_s=self.val["exch_s"].strip(),
+                      rst_s=self.val["rst_s"] or old["rst_s"],
+                      rst_r=self.val["rst_r"] or old["rst_r"])
         if call != old["call"]:        # name etc. belonged to the old callsign
             info = self.qrz.info(call) or {}
             fields.update(name=info.get("name", ""), qth=info.get("qth", ""),
@@ -764,7 +816,8 @@ class App:
 
     def key(self, scr, ch):
         """Returns False to quit."""
-        name = FIELDS[self.focus]
+        fields = self.fields()
+        name = fields[self.focus]
         if ch in (curses.KEY_F10, "\x18"):                       # F10, Ctrl-X
             return False
         if ch == curses.KEY_F2:
@@ -795,15 +848,15 @@ class App:
         elif ch == "\x1b":                                       # Esc
             self.clear()
             self.msg = "Cleared."
-        elif ch in ("\t", curses.KEY_BTAB) or (ch == " " and name != "exch"):
+        elif ch in ("\t", curses.KEY_BTAB) or (ch == " " and name not in SPACE_OK):
             if self.focus == 0:
                 self.leave_call_field()
             if ch == curses.KEY_BTAB:
-                self.focus = (self.focus - 1) % len(FIELDS)
+                self.focus = (self.focus - 1) % len(fields)
             elif ch == " " and self.focus == 0:
                 self.focus = FIELDS.index("exch")   # skip the RST fields
             else:
-                self.focus = (self.focus + 1) % len(FIELDS)
+                self.focus = (self.focus + 1) % len(fields)
         elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
             self.val[name] = self.val[name][:-1]
             self.dupe_ok = ""
@@ -887,7 +940,7 @@ class App:
                 self.good_attr | curses.A_BOLD)
 
         x, cursor = 1, (h - 4, 1)
-        for i, name in enumerate(FIELDS):
+        for i, name in enumerate(self.fields()):
             put(h - 5, x, LABELS[name])
             shown = self.val[name]
             if not shown and name.startswith("rst"):
@@ -897,8 +950,9 @@ class App:
             if i == self.focus:
                 cursor = (h - 4, x + len(self.val[name]))
             x += max(WIDTHS[name], len(LABELS[name])) + 2
-        put(h - 5, x, "Exch sent")
-        put(h - 4, x, self.exch_sent() or "-")
+        if not self.edit:
+            put(h - 5, x, "Exch sent")
+            put(h - 4, x, self.exch_sent() or "-")
 
         put(h - 2, 1, self.msg)
         put(h - 1, 0, " Enter log | Tab next | Space call>exch | Esc clear | Up edit | "
