@@ -67,6 +67,8 @@ def send(s, wait=0.6):
 
 pump(1.5)
 send("dl1abc/p"); send(" "); send("o05"); send("\r")          # QSO 1 on 14060 CW
+send("dl1abc/p\r"); assert b"DUPE" in screen                 # dupe: 1st Enter warns
+send("\x1b")                                                 # Esc, not logged
 send("7030.5\r", 1.2)                                         # QSY via logger
 send("ssb\r", 1.2)                                            # mode via logger
 send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\r")    # QSO 2 with RSTs
@@ -95,4 +97,25 @@ s, c = m.parse_qrz('<?xml version="1.0"?><QRZDatabase version="1.34" '
 assert s["Key"] == "abc" and c["fname"] == "Jörg" and c["grid"] == "JO31"
 assert m.parse_freq("144300") == 144300000 and m.parse_freq("14.060") == 14060000
 assert m.cabrillo_freq(144300000) == "144" and m.cabrillo_freq(7030500) == "7030"
+# dupe rules
+from datetime import datetime, timezone, timedelta
+lg = m.Log(os.path.join(work, "d.db"))
+lg.add(ts="2026-12-01 18:10:00", mycall="DA2IT", call="DL1ABC", freq_hz=144300000,
+       mode="SSB", rst_s="59", rst_r="59", exch_s="N99", exch_r="N01")
+R = lambda **k: dict({"check": "band", "ignore_suffix": False, "exchange": False,
+                      "minutes": 0}, **k)
+now = datetime(2026, 12, 1, 18, 30, tzinfo=timezone.utc)
+d = lambda rules, call="DL1ABC", f=144250000, mode="FM", exch="": bool(
+    lg.find_dupe(rules, call, f, mode, exch, now))
+assert d(R()) and not d(R(), f=432200000)                    # once per band
+assert not d(R(check="band_mode"), mode="CW")                # CW vs phone
+assert d(R(check="band_mode"), mode="FM")                    # FM and SSB = phone
+assert d(R(check="once"), f=432200000, mode="CW")
+assert d(R(check="mode"), f=432200000) and not d(R(check="mode"), mode="CW")
+assert not d(R(check="off"))
+assert not d(R(), call="DL1ABC/P") and d(R(ignore_suffix=True), call="DL1ABC/P")
+assert not d(R(), call="DL1AB")                              # no substring match
+assert d(R(exchange=True)) and d(R(exchange=True), exch="N01")
+assert not d(R(exchange=True), exch="N02")                   # moved: new exchange
+assert d(R(minutes=30)) and not d(R(minutes=15))             # 20 minutes ago
 print("ALL OK")

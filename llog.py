@@ -89,6 +89,31 @@ def base_call(call):
     return max(call.split("/"), key=len)
 
 
+def mode_group(mode):
+    """Contest mode class: all phone modes count as one, all digital as one."""
+    if mode == "CW":
+        return "CW"
+    return "PH" if mode in ("SSB", "FM", "AM") else "DIG"
+
+
+DUPE_CHECKS = ("band", "band_mode", "mode", "once", "off")
+
+
+def dupe_rules(cfg):
+    con = cfg["contest"]
+    check = con.get("dupe_check", "band").strip().lower()
+    if check not in DUPE_CHECKS:
+        sys.exit(f"dupe_check = {check!r} is not valid; use one of: "
+                 + ", ".join(DUPE_CHECKS))
+    try:
+        return {"check": check,
+                "ignore_suffix": con.getboolean("dupe_ignore_suffix", False),
+                "exchange": con.getboolean("dupe_exchange", False),
+                "minutes": con.getint("dupe_minutes", 0)}
+    except ValueError as exc:
+        sys.exit(f"Bad dupe setting in the contest file: {exc}")
+
+
 def ascii_only(text):
     return unicodedata.normalize("NFKD", text or "").encode(
         "ascii", "ignore").decode()
@@ -269,6 +294,37 @@ class Log:
         self.db.execute("DELETE FROM qso WHERE id=(SELECT MAX(id) FROM qso)")
         self.db.commit()
 
+    def find_dupe(self, rules, call, freq_hz, mode, exch="", now=None):
+        """Returns the earlier QSO that makes this one a dupe, or None."""
+        if rules["check"] == "off":
+            return None
+        now = now or datetime.now(timezone.utc)
+        found = self.db.execute(
+            "SELECT ts, call, freq_hz, mode, exch_r FROM qso "
+            "WHERE call LIKE ? ORDER BY id DESC", (f"%{base_call(call)}%",))
+        for ts, old_call, old_freq, old_mode, old_exch in found:
+            if rules["ignore_suffix"]:
+                if base_call(old_call) != base_call(call):
+                    continue
+            elif old_call != call:
+                continue
+            if (rules["check"] in ("band", "band_mode")
+                    and band_of(old_freq or 0) != band_of(freq_hz or 0)):
+                continue
+            if (rules["check"] in ("mode", "band_mode")
+                    and mode_group(old_mode) != mode_group(mode)):
+                continue
+            if rules["exchange"] and exch and old_exch != exch:
+                continue
+            if rules["minutes"]:
+                then = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=timezone.utc)
+                if (now - then).total_seconds() >= rules["minutes"] * 60:
+                    continue
+            return {"ts": ts, "call": old_call, "freq_hz": old_freq,
+                    "mode": old_mode, "exch_r": old_exch}
+        return None
+
     # ---- exports
     def export_adif(self, path):
         def field(name, value):
@@ -390,7 +446,11 @@ def load_config(config_dir, contest):
                    "rig": {"host": "127.0.0.1", "port": "4532"},
                    "contest": {"contest": "", "exchange_sent": "",
                                "category_operator": "SINGLE-OP",
-                               "email": "", "specific": ""}})
+                               "email": "", "specific": "",
+                               "dupe_check": "band",
+                               "dupe_ignore_suffix": "no",
+                               "dupe_exchange": "no",
+                               "dupe_minutes": "0"}})
     station_file = os.path.join(config_dir, "config.ini")
     if os.path.exists(station_file):
         cfg.read(station_file)
@@ -421,7 +481,12 @@ def load_config(config_dir, contest):
             "SPECIFIC header (own DOK for DARC contests, '-' = none)",
             con["exchange_sent"] if con["exchange_sent"] != "#" else ""
         ).upper()
+        con["dupe_check"] = ask(
+            "Dupe check: band / band_mode / mode / once / off",
+            con["dupe_check"]).lower()
         write_ini(contest_file, cfg, ("contest",))
+        print("More dupe options (dupe_ignore_suffix, dupe_exchange, "
+              "dupe_minutes) can be edited in that file.\n")
     if not cfg["contest"]["email"]:
         cfg["contest"]["email"] = cfg["station"].get("email", "")
     return cfg
@@ -437,6 +502,8 @@ class App:
     def __init__(self, cfg, log):
         self.cfg, self.log = cfg, log
         self.mycall = cfg["station"]["call"]
+        self.rules = dupe_rules(cfg)
+        self.dupe_ok = ""     # callsign whose dupe warning was confirmed
         self.rig = Rig(cfg["rig"]["host"], cfg["rig"].getint("port"))
         self.qrz = Qrz(os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
                        os.environ.get("QRZ_PASSWORD", cfg["qrz"]["password"]))
@@ -465,6 +532,20 @@ class App:
     def clear(self):
         self.val = dict.fromkeys(FIELDS, "")
         self.focus = 0
+        self.dupe_ok = ""
+
+    def dupe(self):
+        call = self.val["call"]
+        if not is_call(call):
+            return None
+        return self.log.find_dupe(self.rules, call, self.freq(), self.mode(),
+                                  self.val["exch"].strip())
+
+    @staticmethod
+    def dupe_text(q):
+        return (f"DUPE: {q['call']} worked {q['ts'][11:16]}Z on "
+                f"{band_of(q['freq_hz'] or 0) or '?'} {q['mode']}"
+                + (f", exchange {q['exch_r']}" if q["exch_r"] else ""))
 
     # ---- actions
     def set_freq(self, hz):
@@ -496,6 +577,9 @@ class App:
             self.msg = "Not a valid callsign."
         elif not self.freq():
             self.msg = "No frequency: start rigctld or type one (kHz) + Enter."
+        elif self.dupe() and self.dupe_ok != call:
+            self.dupe_ok = call
+            self.msg = self.dupe_text(self.dupe()) + " - Enter again logs it anyway."
         else:
             info = self.qrz.info(call) or {}
             self.log.add(
@@ -577,9 +661,11 @@ class App:
                 self.focus = (self.focus + 1) % len(FIELDS)
         elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
             self.val[name] = self.val[name][:-1]
+            self.dupe_ok = ""
         elif isinstance(ch, str) and ch.isprintable():
             if len(self.val[name]) < WIDTHS[name]:
                 self.val[name] += ch.upper()
+            self.dupe_ok = ""
         return True
 
     # ---- drawing
@@ -627,6 +713,10 @@ class App:
                 x for x in (info["name"], info["qth"], info["country"],
                             info["grid"]) if x)
         put(h - 7, 1, line, curses.A_BOLD)
+        dupe = self.dupe()
+        if dupe:
+            put(h - 6, 1, " " + self.dupe_text(dupe) + " ",
+                self.warn_attr | curses.A_BOLD)
 
         x, cursor = 1, (h - 4, 1)
         for i, name in enumerate(FIELDS):
@@ -656,6 +746,11 @@ class App:
     def run(self, scr):
         if hasattr(curses, "set_escdelay"):
             curses.set_escdelay(25)
+        self.warn_attr = curses.A_REVERSE
+        if curses.has_colors():
+            curses.start_color()
+            curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_RED)
+            self.warn_attr = curses.color_pair(1)
         curses.curs_set(1)
         scr.keypad(True)
         scr.timeout(200)
@@ -698,6 +793,7 @@ def main():
     if not args.logfile:
         stem = os.path.splitext(os.path.basename(args.contest))[0].lower()
         args.logfile = stem + ".db"
+    dupe_rules(cfg)                      # fail early on a bad setting
     log = Log(args.logfile)
     if args.export_adif or args.export_cabrillo or args.export_stf:
         if args.export_stf:

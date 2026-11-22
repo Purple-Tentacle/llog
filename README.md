@@ -8,7 +8,7 @@ One Python file, standard library only, nothing to compile.
 - Typing a frequency in the logger tunes the radio
 - SQLite log file, ADIF, Cabrillo and STF export
 
-Dupe checking and scoring are not implemented yet.
+Dupe checking is configurable per contest. Scoring is not implemented yet.
 
 ## Requirements
 
@@ -43,7 +43,7 @@ Station data and contest data live in separate files under `~/.config/llog/`:
 | File | Content |
 | --- | --- |
 | `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port |
-| `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header |
+| `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, dupe rules |
 
 Both are created by a few questions the first time they are needed: the
 station file on the very first start, a contest file the first time you start
@@ -52,6 +52,51 @@ An `email` entry in a contest file overrides the station e-mail.
 
 The QRZ password is stored in `config.ini` in plain text (file mode 600); the
 environment variables `QRZ_USERNAME` and `QRZ_PASSWORD` override the file.
+
+## Dupe checking
+
+While you type a callsign, llog shows a red `DUPE` line with the earlier QSO.
+A dupe is not blocked: the first Enter warns, a second Enter logs it anyway.
+
+The rules are set in the contest file:
+
+| Option | Values | Meaning |
+| --- | --- | --- |
+| `dupe_check` | `band` (default) | A station counts once per band |
+| | `band_mode` | Once per band and mode class |
+| | `mode` | Once per mode class, on any band |
+| | `once` | Once in the whole contest |
+| | `off` | No dupe check |
+| `dupe_ignore_suffix` | `no` / `yes` | `yes`: `DL1ABC/P` and `DL1ABC` are the same station |
+| `dupe_exchange` | `no` / `yes` | `yes`: a station counts again when it sends a different exchange (rovers and mobiles that changed location) |
+| `dupe_minutes` | `0` or a number | A station may be worked again after this many minutes; `0` = never |
+
+Mode classes are CW, phone (SSB, FM and AM together) and digital.
+
+Settings for some contests:
+
+| Contest | Setting |
+| --- | --- |
+| WNA, WSA, CQ WW, CQ WPX, ARRL RTTY Roundup | `dupe_check = band` |
+| IARU HF Championship | `dupe_check = band_mode` |
+| ARRL November Sweepstakes | `dupe_check = once` |
+| ARRL 10 GHz and Up | `dupe_check = band`, `dupe_exchange = yes` |
+
+Always check the current rules of the contest you enter.
+
+Example `contests/wsa.ini`:
+
+```
+[contest]
+contest = WSA
+exchange_sent = N99
+category_operator = SINGLE-OP
+specific = N99
+dupe_check = band
+dupe_ignore_suffix = no
+dupe_exchange = no
+dupe_minutes = 0
+```
 
 ## Keys
 
