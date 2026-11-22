@@ -84,6 +84,11 @@ PgDn and PgUp move a highlight through the spots. Enter in an empty call
 field takes the highlighted spot: the current row is tuned to its frequency
 and the callsign is filled in. Esc removes the highlight.
 
+F6 spots a station on the cluster: the callsign in the call field on the
+current row's frequency, or, if the call field is empty, the last logged QSO
+on the frequency it was logged with. llog asks for an optional comment; Enter
+sends the spot, Esc cancels. A spot is public and cannot be withdrawn.
+
 Add the node to `config.ini`:
 
 ```
@@ -216,6 +221,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | `\` | Switch to the other entry row (A/B) |
 | PgDn / PgUp | Highlight a DX cluster spot; Enter in an empty call field takes it |
 | F5 | Start an ATU tune cycle on the radio (it transmits a carrier) |
+| F6 | Spot a station on the DX cluster (asks for a comment first) |
 | Up / Down | Edit a logged QSO in the list (see below) |
 | F8 | Delete the last QSO, or the selected one while editing |
 | F10 or Ctrl-X | Quit |

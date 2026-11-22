@@ -390,6 +390,7 @@ class Cluster(threading.Thread):
         self.status = "connecting" if host else "off"
         self._spots = {}      # (dx call, band) -> spot, newest wins
         self._lock = threading.Lock()
+        self._sock = None
 
     def feed(self, line):
         seen = time.time()
@@ -414,6 +415,18 @@ class Cluster(threading.Thread):
             old = self._spots.get((spot["call"], spot["band"]))
             if not old or old["seen"] <= seen:
                 self._spots[(spot["call"], spot["band"])] = spot
+
+    def send_spot(self, freq_hz, call, comment=""):
+        """Announces a station on the cluster. Returns an error text or ''."""
+        line = f"DX {freq_hz / 1000:.1f} {call} {comment}".rstrip()
+        sock = self._sock
+        if self.status != "connected" or sock is None:
+            return "DX cluster is not connected."
+        try:
+            sock.sendall((line + "\r\n").encode("latin-1", "replace"))
+        except OSError as exc:
+            return f"Spot not sent: {exc}"
+        return ""
 
     def spots(self, band):
         """Recent spots on one band, newest first."""
@@ -442,6 +455,7 @@ class Cluster(threading.Thread):
                         if not logged_in:       # answer the login prompt once
                             sock.sendall((self.call + "\r\nsh/dx 50\r\n").encode())
                             sock.settimeout(120)
+                            self._sock = sock
                             logged_in, self.status = True, "connected"
                         buf += re.sub(rb"\xff[\xfb-\xfe].", b"", data)
                         *lines, buf = buf.split(b"\n")
@@ -449,6 +463,7 @@ class Cluster(threading.Thread):
                             self.feed(line.decode("latin-1"))
             except OSError as exc:
                 self.status = f"offline: {exc}"
+            self._sock = None
             time.sleep(30)
 
 
@@ -563,6 +578,12 @@ class Log:
         sql = "SELECT id," + ",".join(self.COLS) + " FROM qso ORDER BY ts, id"
         rows = [dict(zip(("id",) + self.COLS, r)) for r in self.db.execute(sql)]
         return rows[-last:] if last else rows
+
+    def newest(self):
+        """The QSO that was entered last (not the latest by time), or None."""
+        sql = "SELECT id," + ",".join(self.COLS) + " FROM qso ORDER BY id DESC LIMIT 1"
+        row = self.db.execute(sql).fetchone()
+        return dict(zip(("id",) + self.COLS, row)) if row else None
 
     def delete(self, qso_id):
         self.db.execute("DELETE FROM qso WHERE id=?", (qso_id,))
@@ -822,6 +843,7 @@ class App:
         self.manual_freq = {"A": 0, "B": 0}
         self.manual_mode = {"A": "SSB", "B": "SSB"}
         self.spot = ""        # callsign of the highlighted cluster spot
+        self.prompt = None    # question on the message line: text, value, action
         self.edit = None      # QSO being edited in the list, or None
         self.eval = {}        # its cell texts while editing
         self.efocus = 1       # edited cell (index into COLUMNS)
@@ -1095,6 +1117,9 @@ class App:
 
     def key(self, scr, ch):
         """Returns False to quit."""
+        if self.prompt:
+            self.prompt_key(ch)
+            return True
         if ch in (curses.KEY_F10, "\x18"):                       # F10, Ctrl-X
             return False
         if ch == curses.KEY_F2:
@@ -1109,6 +1134,8 @@ class App:
                               or "auto")
             else:
                 self.msg = "Rig offline - cannot start ATU tune."
+        elif ch == curses.KEY_F6:
+            self.spot_send()
         elif ch == curses.KEY_NPAGE:
             self.spot_step(+1)
         elif ch == curses.KEY_PPAGE:
@@ -1118,8 +1145,8 @@ class App:
         elif ch == curses.KEY_DOWN:
             self.select(+1)
         elif ch == curses.KEY_F8:
-            rows = [self.edit] if self.edit else self.log.rows(last=1)
-            if rows:
+            rows = [self.edit or self.log.newest()]
+            if rows[0]:
                 which = "QSO #%d" % rows[0]["id"] if self.edit else "last QSO"
                 self.msg = f"Delete {which} with {rows[0]['call']}? (y/N)"
                 self.draw(scr)
@@ -1189,6 +1216,43 @@ class App:
                                   len(calls) - 1)]
         if self.spot in calls:
             self.msg = f"Spot {self.spot} - Enter in an empty call field takes it."
+
+    def spot_send(self):
+        """F6: spot the station in the call field, or else the last QSO."""
+        call, hz = self.val["call"], self.freq()
+        if not is_call(call):
+            last = self.log.newest()
+            if not last:
+                self.msg = "Nothing to spot: type a callsign or log a QSO first."
+                return
+            call, hz = last["call"], last["freq_hz"]
+        if not hz:
+            self.msg = "No frequency for the spot."
+            return
+        if self.cluster.status != "connected":
+            self.msg = "DX cluster is not connected."
+            return
+
+        def send(comment):
+            error = self.cluster.send_spot(hz, call, comment.strip())
+            self.msg = error or f"Spotted {call} on {hz / 1000:.1f} kHz"
+
+        self.prompt = {"text": f"Spot {call} on {hz / 1000:.1f} kHz - comment "
+                               "(Enter sends, Esc cancels): ",
+                       "value": "", "action": send}
+
+    def prompt_key(self, ch):
+        prompt = self.prompt
+        if ch in ("\n", "\r", curses.KEY_ENTER):
+            self.prompt = None
+            prompt["action"](prompt["value"])
+        elif ch == "\x1b":
+            self.prompt = None
+            self.msg = "Cancelled."
+        elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+            prompt["value"] = prompt["value"][:-1]
+        elif isinstance(ch, str) and ch.isprintable() and len(prompt["value"]) < 30:
+            prompt["value"] += ch
 
     def spot_take(self):
         """Tune the current row to the highlighted spot and fill in its call."""
@@ -1344,9 +1408,14 @@ class App:
                 x += max(WIDTHS[name], len(LABELS[name])) + 2
             put(line, x, self.exch_sent() or "-")
 
-        put(h - 2, 1, self.msg)
+        if self.prompt:
+            line = self.prompt["text"] + self.prompt["value"]
+            put(h - 2, 1, line, curses.A_BOLD)
+            cursor = (h - 2, min(1 + len(line), w - 2))
+        else:
+            put(h - 2, 1, self.msg)
         put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
-                      "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn spot | F5 ATU | F2 ADIF | "
+                      "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn spot | F5 ATU | F6 spot | F2 ADIF | "
                       "F3 Cabrillo | F8 delete | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
         try:
