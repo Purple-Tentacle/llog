@@ -6,7 +6,7 @@ One Python file, standard library only, nothing to compile.
 - Callsign entry with QRZ.com lookup (XML API, needs a QRZ XML subscription for full data)
 - Live frequency and mode from the radio through Hamlib's `rigctld`
 - Typing a frequency in the logger tunes the radio
-- SQLite log file, ADIF and Cabrillo export
+- SQLite log file, ADIF, Cabrillo and STF export
 
 Dupe checking and scoring are not implemented yet.
 
@@ -18,14 +18,20 @@ Dupe checking and scoring are not implemented yet.
 ## Usage
 
 ```
-rigctl -l | grep -i kx2                       # find the Hamlib model number
+# Icom IC-705 over USB (2 m / 70 cm, e.g. WNA and WSA)
+rigctl -l | grep 705                          # find the Hamlib model number
+rigctld -m <model> -r /dev/ttyACM0 &
+
+# Elecraft KX2 with KXUSB cable (HF)
+rigctl -l | grep -i kx2
 rigctld -m <model> -r /dev/ttyUSB0 -s 38400 &
-python3 contestlog.py wsa-2026-12.db          # one log file per contest
+
+python3 llog.py wsa-2026-12.db          # one log file per contest
 ```
 
 The first start asks for your callsign, the exchange you send, your QRZ login
-and the Cabrillo header data, and stores them in
-`~/.config/contestlog/config.ini` (mode 600). The QRZ password is stored there
+and the log header data, and stores them in
+`~/.config/llog/config.ini` (mode 600). The QRZ password is stored there
 in plain text; the environment variables `QRZ_USERNAME` and `QRZ_PASSWORD`
 override the file.
 
@@ -44,14 +50,22 @@ used for the log only.
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
 | F2 | Export ADIF (`<logfile>.adi`) |
 | F3 | Export Cabrillo (`<CALL>-<date>-1.cbr`) |
+| F4 | Export STF (`<CALL>_<MM>_<YYYY>_<contest>.stf`) |
 | F8 | Delete last QSO |
 | F10 or Ctrl-X | Quit |
 
 Exports also work without the UI:
 
 ```
-python3 contestlog.py mylog.db --export-adif out.adi --export-cabrillo out.cbr
+python3 llog.py mylog.db --export-adif out.adi --export-cabrillo out.cbr --export-stf out.stf
 ```
+
+## STF export
+
+The STF export was written from a published example file, not from the
+format specification, and has not been checked by a contest organiser.
+Bands are written in metres (`2`) and 70 cm as `70`; empty fields as `-`.
+Send a test log to the organiser before relying on it, or use Cabrillo.
 
 ## Exchange
 

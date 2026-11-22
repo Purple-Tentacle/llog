@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""contestlog - a very simple terminal contest logger.
+"""llog - a very simple terminal contest logger.
 
 Needs only Python 3.9+ (standard library). Radio control goes through
 Hamlib's rigctld, callsign lookup through the QRZ.com XML API.
 
     rigctld -m <model> -r /dev/ttyUSB0 -s 38400 &
-    python3 contestlog.py mylog.db
+    python3 llog.py mylog.db
 """
 import argparse
 import configparser
@@ -24,8 +24,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-DEFAULT_CONFIG = os.path.expanduser("~/.config/contestlog/config.ini")
-AGENT = "contestlog-0.1"
+DEFAULT_CONFIG = os.path.expanduser("~/.config/llog/config.ini")
+AGENT = "llog-0.2"
 
 BANDS = [  # (low Hz, high Hz, ADIF band, Cabrillo frequency or None = kHz)
     (1_800_000, 2_000_000, "160m", None), (3_500_000, 4_000_000, "80m", None),
@@ -275,8 +275,8 @@ class Log:
             value = ascii_only(str(value))
             return f"<{name}:{len(value)}>{value} " if value else ""
         with open(path, "w", encoding="ascii", newline="\n") as out:
-            out.write(f"contestlog export\n<ADIF_VER:5>3.1.4 "
-                      f"<PROGRAMID:10>contestlog <EOH>\n")
+            out.write(f"llog export\n<ADIF_VER:5>3.1.4 "
+                      f"<PROGRAMID:4>llog <EOH>\n")
             for q in self.rows():
                 ts = q["ts"]
                 out.write(
@@ -298,7 +298,7 @@ class Log:
         return path
 
     def export_cabrillo(self, path, cfg):
-        cab = cfg["cabrillo"]
+        cab = cfg["contest"]
         mycall = cfg["station"]["call"]
         lines = ["START-OF-LOG: 3.0", f"CONTEST: {cab.get('contest', '')}",
                  f"CALLSIGN: {mycall}",
@@ -307,7 +307,7 @@ class Log:
             lines.append(f"EMAIL: {cab['email']}")
         if cab.get("specific"):
             lines.append(f"SPECIFIC: {cab['specific']}")
-        lines.append("CREATED-BY: contestlog 0.1")
+        lines.append("CREATED-BY: llog 0.2")
         for q in self.rows():
             ts = q["ts"]
             lines.append("QSO: {:>5} {:<2} {} {} {:<13} {:<3} {:<6} {:<13} {:<3} {}"
@@ -321,6 +321,36 @@ class Log:
             out.write("\n".join(lines) + "\n")
         return path
 
+    def export_stf(self, path, cfg):
+        """STF1 (Stuetzerbach format). Empty fields are written as '-'."""
+        con = cfg["contest"]
+        now = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
+        rows = self.rows()
+        lines = ["STF1", f'#Data written "{now}"',
+                 "#STF-Export generated with llog 0.2", "Header",
+                 f"Contest      {con.get('contest', '')}",
+                 f"MyCall       {cfg['station']['call']}",
+                 f"Category     {con.get('category_operator', 'SINGLE-OP')}"]
+        if con.get("email"):
+            lines.append(f"EMail        {con['email']}")
+        if con.get("specific"):
+            lines.append(f"Specific     {con['specific']}")
+        lines += [f"ClaimedQSO   {len(rows)}",
+                  "QsoOrder     Date Time Band Mode Call SRst Sent RRst Rcvd",
+                  "EndHeader", "QsoList"]
+        for q in rows:
+            ts = q["ts"]
+            band = band_of(q["freq_hz"] or 0).rstrip("cm") or "-"
+            lines.append("{} {} {:>4} {:<4} {:<13} {:<3} {:<6} {:<3} {}".format(
+                ts[0:4] + ts[5:7] + ts[8:10], ts[11:13] + ts[14:16], band,
+                q["mode"], q["call"], q["rst_s"] or "-", q["exch_s"] or "-",
+                q["rst_r"] or "-", q["exch_r"].replace(" ", "_") or "-"))
+        lines.append("EndQSOList")
+        with open(path, "w", encoding="ascii", errors="replace",
+                  newline="\n") as out:
+            out.write("\n".join(lines) + "\n")
+        return path
+
 
 # ------------------------------------------------------------------ config
 def load_config(path):
@@ -328,7 +358,7 @@ def load_config(path):
     cfg.read_dict({"station": {"call": "", "exchange_sent": ""},
                    "qrz": {"username": "", "password": ""},
                    "rig": {"host": "127.0.0.1", "port": "4532"},
-                   "cabrillo": {"contest": "", "category_operator": "SINGLE-OP",
+                   "contest": {"contest": "", "category_operator": "SINGLE-OP",
                                 "email": "", "specific": ""}})
     if os.path.exists(path):
         cfg.read(path)
@@ -341,10 +371,10 @@ def load_config(path):
     cfg["qrz"]["username"] = input("QRZ.com username (empty = no lookup): ").strip()
     if cfg["qrz"]["username"]:
         cfg["qrz"]["password"] = getpass.getpass("QRZ.com password: ")
-    cfg["cabrillo"]["contest"] = input("Contest name for Cabrillo (e.g. WSA): ").strip()
-    cfg["cabrillo"]["email"] = input("E-mail for Cabrillo header: ").strip()
+    cfg["contest"]["contest"] = input("Contest name for the log header (e.g. WSA or WNA): ").strip()
+    cfg["contest"]["email"] = input("E-mail for the log header: ").strip()
     if cfg["station"]["exchange_sent"] not in ("", "#"):
-        cfg["cabrillo"]["specific"] = cfg["station"]["exchange_sent"]
+        cfg["contest"]["specific"] = cfg["station"]["exchange_sent"]
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as out:
@@ -445,6 +475,14 @@ class App:
         try:
             if kind == "adif":
                 path = self.log.export_adif(stem + ".adi")
+            elif kind == "stf":
+                rows = self.log.rows()
+                ts = rows[0]["ts"] if rows else "0000-00"
+                contest = self.cfg["contest"].get("contest") or "LOG"
+                name = (f"{self.mycall.replace('/', '-')}_{ts[5:7]}_{ts[0:4]}_"
+                        f"{contest.replace(' ', '-')}.stf")
+                path = self.log.export_stf(
+                    os.path.join(os.path.dirname(self.log.path), name), self.cfg)
             else:
                 rows = self.log.rows()
                 day = rows[0]["ts"][:10] if rows else "empty"
@@ -464,6 +502,8 @@ class App:
             self.export("adif")
         elif ch == curses.KEY_F3:
             self.export("cabrillo")
+        elif ch == curses.KEY_F4:
+            self.export("stf")
         elif ch == curses.KEY_F8:
             rows = self.log.rows(last=1)
             if rows:
@@ -561,7 +601,7 @@ class App:
         put(h - 2, 1, self.msg)
         put(h - 1, 0, " Enter log | Tab next | Space call>exch | Esc clear | "
                       "<kHz> Enter = QSY | CW/SSB/FM Enter = mode | F2 ADIF | "
-                      "F3 Cabrillo | F8 del last | F10 quit ".ljust(w - 1),
+                      "F3 Cabrillo | F4 STF | F8 del last | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
         try:
             scr.move(*cursor)
@@ -592,18 +632,21 @@ class App:
 
 def main():
     ap = argparse.ArgumentParser(description="Simple terminal contest logger")
-    ap.add_argument("logfile", nargs="?", default="contestlog.db",
+    ap.add_argument("logfile", nargs="?", default="llog.db",
                     help="SQLite log file, one per contest (default: %(default)s)")
     ap.add_argument("--config", default=DEFAULT_CONFIG)
     ap.add_argument("--export-adif", metavar="FILE")
     ap.add_argument("--export-cabrillo", metavar="FILE")
+    ap.add_argument("--export-stf", metavar="FILE")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     if not cfg["station"]["call"]:
         sys.exit(f"No callsign configured in {args.config}")
     log = Log(args.logfile)
-    if args.export_adif or args.export_cabrillo:
+    if args.export_adif or args.export_cabrillo or args.export_stf:
+        if args.export_stf:
+            print("STF:", log.export_stf(args.export_stf, cfg))
         if args.export_adif:
             print("ADIF:", log.export_adif(args.export_adif))
         if args.export_cabrillo:

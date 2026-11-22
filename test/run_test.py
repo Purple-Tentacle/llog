@@ -2,7 +2,7 @@
 import os, pty, select, socket, sqlite3, sys, threading, time, importlib.util
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-APP = os.path.join(os.path.dirname(HERE), "contestlog.py")
+APP = os.path.join(os.path.dirname(HERE), "llog.py")
 state = {"freq": 14060000, "mode": "CW", "cmds": []}
 
 
@@ -43,7 +43,7 @@ password =
 [rig]
 host = 127.0.0.1
 port = {port}
-[cabrillo]
+[contest]
 contest = WSA
 email = test@example.org
 specific = N99
@@ -71,7 +71,7 @@ send("7030.5\r", 1.2)                                         # QSY via logger
 send("ssb\r", 1.2)                                            # mode via logger
 send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\r")    # QSO 2 with RSTs
 send("oops1x\r"); send("\x1b[19~"); send("y")                 # QSO 3, F8 delete
-send("\x1bOQ"); send("\x1bOR")                            # F2, F3 exports
+send("\x1bOQ"); send("\x1bOR"); send("\x1bOS")                            # F2, F3 exports
 send("\x1b[21~", 1.0)                                         # F10 quit
 os.waitpid(pid, 0)
 
@@ -82,11 +82,11 @@ assert rows == [("DL1ABC/P", 14060000, "CW", "599", "599", "N99", "O05"),
                 ("DK2XYZ", 7030500, "SSB", "57", "55", "N99", "NM")], rows
 assert "F 7030500" in state["cmds"] and "M LSB 0" in state["cmds"], state["cmds"][-20:]
 for name in sorted(os.listdir(work)):
-    if name.endswith((".adi", ".cbr")):
+    if name.endswith((".adi", ".cbr", ".stf")):
         print("-----", name); print(open(os.path.join(work, name)).read())
 assert b"RIG ok" in screen
 
-spec = importlib.util.spec_from_file_location("contestlog", APP)
+spec = importlib.util.spec_from_file_location("llog", APP)
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 s, c = m.parse_qrz('<?xml version="1.0"?><QRZDatabase version="1.34" '
     'xmlns="http://xmldata.qrz.com"><Callsign><call>DL1ABC</call><fname>Jörg</fname>'
