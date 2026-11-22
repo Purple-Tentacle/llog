@@ -53,7 +53,8 @@ def fake_cluster(srv):             # DX cluster node: login prompt, then spots
     state["cluster_login"] = conn.recv(100)
     conn.sendall(b"Hello\r\n"
                  b"DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z\r\n"
-                 b"DX de DL2BBB-#:    7030.5  DK9ZZ        cq                             2154Z\r\n"
+                 b"DX de DL2BBB-#:    7033.0  DK9ZZ        cq                             2154Z\r\n"
+                 b"DX de DL2BBB-#:    7012.0  DJ5ZZ        cq                             2153Z\r\n"
                  b"DX de DL3CCC:     14060.0  DL1ABC/P     wsa                            2155Z JO31\r\n")
     time.sleep(60)
 
@@ -124,6 +125,8 @@ send("dl7");  send("\\", 1.2)                                  # leave text in r
 send("432200\r", 1.2); send("fm\r", 1.2)                       # row B: own frequency and mode
 send("db1xx\r"); send("\\", 1.2)                              # QSO in row B, back to A
 send("\x7f\x7fk3aa\r")                                        # row A kept "DL7": DLK3AA
+send("\x1b[6~"); send("\x1b[6~"); send("\x1b[5~")              # PgDn PgDn PgUp: latest 40m spot
+send("\r", 1.2); send("\r")                                   # take it (QSY + call), log it
 send("\x1b[15~", 1.5)                                         # F5: ATU tune
 send("\x1bOQ"); send("\x1bOR")                            # F2, F3 exports
 send("\x1b[21~", 1.0)                                         # F10 quit
@@ -135,7 +138,9 @@ print(rows)
 assert rows == [("DL1ABC", 14060000, "CW", "599", "599", "N99", "O05"),
                 ("DK2XYZ", 7040000, "CW", "57", "55", "N99", "O05"),
                 ("DB1XX", 432200000, "FM", "59", "59", "N99", ""),
-                ("DK3AA", 7030500, "SSB", "59", "59", "N99", "")], rows
+                ("DK3AA", 7030500, "SSB", "59", "59", "N99", ""),
+                ("DJ5ZZ", 7012000, "SSB", "59", "59", "N99", "")], rows
+assert "F 7012000" in state["cmds"]
 # default vfo_switch = retune: no VFO select, row A is retuned when coming back
 assert not any(c.startswith("V ") for c in state["cmds"])
 assert state["cmds"].count("F 7030500") == 2 and "M LSB -1" in state["cmds"]
@@ -225,12 +230,12 @@ r = m.compute_score(rows(("DL1A", V, "CW", "O05"), ("DL1B", V, "FM", "NOTO"),
                          ("DL1E", U, "FM", "O05"), ("DL1F", V, "FM", "NM")),
                     dr, sr)
 assert (r["points"], r["mults"], r["score"]) == (18, 3, 54), r
-assert "CLAIMED-SCORE: 36" in open(os.path.join(work, "DA2IT-" +
+assert "CLAIMED-SCORE: 44" in open(os.path.join(work, "DA2IT-" +
     datetime.now(timezone.utc).strftime("%Y-%m-%d") + "-1.cbr")).read()
 import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
 assert b"Mults" in txt and b"NOTO" in txt and b"O55" in txt
-assert b"DX cluster" in txt and b"K1ABC" in txt and state["cluster_login"] == b"DA2IT\r\n"
+assert b"DX cluster" in txt and b"K1ABC" in txt and state["cluster_login"].startswith(b"DA2IT\r\n")
 cl = m.Cluster("", 0, "DA2IT")
 cl.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
 cl.feed("DX de DL2BBB-#:    7030.5  DK9ZZ        cq                             2154Z")
@@ -239,6 +244,10 @@ cl.feed("To ALL de DL1AAA: hello"); cl.feed("DX de garbage")
 assert [(x["call"], x["freq_hz"], x["time"]) for x in cl.spots("20m")] == \
     [("K1ABC", 14027300, "2156")] and len(cl.spots("40m")) == 1 and not cl.spots("2m")
 cl._spots[("K1ABC", "20m")]["seen"] -= 31 * 60; assert not cl.spots("20m")   # expired
+now_utc = datetime.now(timezone.utc)
+cl.feed(f"  14010.0  W1AW        {now_utc:%d-%b-%Y %H%M}Z  sh/dx line                 <DL4DDD>")
+cl.feed("  14011.0  W2OLD       01-Jan-2020 1200Z  long gone                  <DL4DDD>")
+assert [x["call"] for x in cl.spots("20m")] == ["W1AW"]
 app = m.App.__new__(m.App)                      # panel logic without a terminal
 c = configparser.ConfigParser(); c.read(os.path.join(EX, "wna.ini"))
 app.scoring = m.score_rules(c); app.freq = lambda: V

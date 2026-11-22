@@ -80,18 +80,25 @@ callsign and spot time (UTC). It follows the band when you QSY or switch
 rows. Stations you have already worked on that band (by the contest's dupe
 rules) are shown dimmed.
 
+PgDn and PgUp move a highlight through the spots. Enter in an empty call
+field takes the highlighted spot: the current row is tuned to its frequency
+and the callsign is filled in. Esc removes the highlight.
+
 Add the node to `config.ini`:
 
 ```
 [cluster]
-host = <hostname of a DX cluster node>
+host = dxspider.co.uk
 port = 7300
 minutes = 30
 ```
 
-llog connects by telnet, logs in with your callsign and keeps each spot for
-`minutes`. The panel needs a terminal at least 126 columns wide; on narrower
-terminals it is hidden. Leave `host` empty to switch the cluster off.
+llog connects by telnet, logs in with your callsign, asks the node for its
+last 50 spots (`sh/dx 50`) and then collects new spots as they arrive. Spots
+of all bands are kept in memory for `minutes`, so changing band only changes
+what is displayed; nothing is fetched again. The panel needs a terminal at
+least 126 columns wide; on narrower terminals it is hidden. Leave `host`
+empty to switch the cluster off.
 
 ## Configuration
 
@@ -205,6 +212,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | F2 | Export ADIF (`<logfile>.adi`) |
 | F3 | Export Cabrillo (`<CALL>-<date>-1.cbr`) |
 | `\` | Switch to the other entry row (A/B) |
+| PgDn / PgUp | Highlight a DX cluster spot; Enter in an empty call field takes it |
 | F5 | Start an ATU tune cycle on the radio (it transmits a carrier) |
 | Up / Down | Edit a logged QSO in the list (see below) |
 | F8 | Delete the last QSO, or the selected one while editing |

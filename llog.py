@@ -374,6 +374,12 @@ SPOT_RE = re.compile(r"^DX de\s+([A-Z0-9/#-]+):\s*(\d+(?:\.\d+)?)\s+"
                      r"([A-Z0-9/]+)\s*(.*?)\s*(\d{4})Z", re.I)
 
 
+# line of a "sh/dx" listing, used to fill the list right after login
+SHDX_RE = re.compile(r"^\s*(\d+\.\d+)\s+([A-Z0-9/]+)\s+"
+                     r"(\d{1,2}-[A-Za-z]{3}-\d{4})\s+(\d{4})Z\s*(.*?)\s*"
+                     r"<([A-Z0-9/#-]+)>", re.I)
+
+
 class Cluster(threading.Thread):
     """Reads spots from a DX cluster node (telnet) and keeps the recent ones."""
 
@@ -386,16 +392,28 @@ class Cluster(threading.Thread):
         self._lock = threading.Lock()
 
     def feed(self, line):
+        seen = time.time()
         match = SPOT_RE.match(line.strip())
-        if not match:
-            return
-        spotter, khz, call, comment, hhmm = match.groups()
+        if match:
+            spotter, khz, call, comment, hhmm = match.groups()
+        else:
+            match = SHDX_RE.match(line)
+            if not match:
+                return
+            khz, call, day, hhmm, comment, spotter = match.groups()
+            try:                # an old spot keeps its real age
+                seen = datetime.strptime(f"{day} {hhmm}", "%d-%b-%Y %H%M").replace(
+                    tzinfo=timezone.utc).timestamp()
+            except ValueError:
+                return
         hz = round(float(khz) * 1000)
         spot = {"call": call.upper(), "freq_hz": hz, "band": band_of(hz),
                 "spotter": spotter.rstrip("-#:"), "comment": comment,
-                "time": hhmm, "seen": time.time()}
+                "time": hhmm, "seen": seen}
         with self._lock:
-            self._spots[(spot["call"], spot["band"])] = spot
+            old = self._spots.get((spot["call"], spot["band"]))
+            if not old or old["seen"] <= seen:
+                self._spots[(spot["call"], spot["band"])] = spot
 
     def spots(self, band):
         """Recent spots on one band, newest first."""
@@ -422,7 +440,7 @@ class Cluster(threading.Thread):
                         except socket.timeout:
                             data = b""
                         if not logged_in:       # answer the login prompt once
-                            sock.sendall((self.call + "\r\n").encode())
+                            sock.sendall((self.call + "\r\nsh/dx 50\r\n").encode())
                             sock.settimeout(120)
                             logged_in, self.status = True, "connected"
                         buf += re.sub(rb"\xff[\xfb-\xfe].", b"", data)
@@ -800,6 +818,7 @@ class App:
         self.row = "A"
         self.manual_freq = {"A": 0, "B": 0}
         self.manual_mode = {"A": "SSB", "B": "SSB"}
+        self.spot = ""        # callsign of the highlighted cluster spot
         self.edit = None      # QSO being edited in the list, or None
         self.eval = {}        # its cell texts while editing
         self.efocus = 1       # edited cell (index into COLUMNS)
@@ -915,7 +934,9 @@ class App:
 
     def enter(self):
         call = self.val["call"]
-        if self.focus == 0 and parse_freq(call) and not is_call(call):
+        if self.focus == 0 and not call and self.spot and self.spot_take():
+            pass
+        elif self.focus == 0 and parse_freq(call) and not is_call(call):
             self.set_freq(parse_freq(call))
             self.val["call"] = ""
         elif self.focus == 0 and call in TYPED_MODES:
@@ -1050,6 +1071,7 @@ class App:
             self.switch_row()
         elif ch == "\x1b":                                       # Esc
             self.clear()
+            self.spot = ""
             self.msg = "Cleared."
         elif ch in ("\t", curses.KEY_BTAB) or (ch == " " and name != "exch"):
             if self.focus == 0:
@@ -1084,6 +1106,10 @@ class App:
                               or "auto")
             else:
                 self.msg = "Rig offline - cannot start ATU tune."
+        elif ch == curses.KEY_NPAGE:
+            self.spot_step(+1)
+        elif ch == curses.KEY_PPAGE:
+            self.spot_step(-1)
         elif ch == curses.KEY_UP:
             self.select(-1)
         elif ch == curses.KEY_DOWN:
@@ -1137,15 +1163,42 @@ class App:
         return rows
 
     def cluster_rows(self):
-        """(text, worked) lines for the cluster panel on the current band."""
-        band = band_of(self.freq() or 0)
+        """Spots on the band of the current row, newest first, with a
+        'worked' flag (dupe by the contest rules) and the panel text."""
         rows = []
-        for spot in self.cluster.spots(band):
+        for spot in self.cluster.spots(band_of(self.freq() or 0)):
             worked = self.log.find_dupe(self.rules, spot["call"],
                                         spot["freq_hz"], self.mode())
-            rows.append((f"{spot['freq_hz'] / 1000:>9.1f} {spot['call']:<12} "
-                         f"{spot['time']}", bool(worked)))
+            rows.append(dict(spot, worked=bool(worked), text=(
+                f"{spot['freq_hz'] / 1000:>9.1f} {spot['call']:<12} "
+                f"{spot['time']}")))
         return rows
+
+    def spot_step(self, step):
+        """PgDn/PgUp: move the highlight through the cluster spots."""
+        calls = [spot["call"] for spot in self.cluster_rows()]
+        if not calls:
+            self.msg = "No cluster spots on this band."
+        elif self.spot not in calls:
+            self.spot = calls[0]
+        else:
+            self.spot = calls[min(max(calls.index(self.spot) + step, 0),
+                                  len(calls) - 1)]
+        if self.spot in calls:
+            self.msg = f"Spot {self.spot} - Enter in an empty call field takes it."
+
+    def spot_take(self):
+        """Tune the current row to the highlighted spot and fill in its call."""
+        for spot in self.cluster_rows():
+            if spot["call"] == self.spot:
+                self.set_freq(spot["freq_hz"])
+                self.val["call"] = spot["call"]
+                self.qrz.request(spot["call"])
+                self.msg = (f"Row {self.row}: {spot['call']} on "
+                            f"{fmt_freq(spot['freq_hz'])}")
+                self.spot = ""
+                return True
+        return False
 
     def score_text(self):
         if not self.scoring["configured"]:
@@ -1195,12 +1248,21 @@ class App:
             put(2, panel_x, f"DX cluster {band_of(self.freq() or 0) or '?'}",
                 curses.A_BOLD)
             spots = self.cluster_rows()
+            line = 3
             if self.cluster.status != "connected":
-                spots = [(self.cluster.status, False)] + spots
+                put(line, panel_x, self.cluster.status[:28])
+                line += 1
             elif not spots:
-                spots = [("no spots on this band yet", False)]
-            for i, (text, worked) in enumerate(spots[:space]):
-                put(3 + i, panel_x, text[:28], curses.A_DIM if worked else 0)
+                put(line, panel_x, "no spots on this band yet")
+            calls = [spot["call"] for spot in spots]
+            first = 0                    # keep the highlighted spot in view
+            if self.spot in calls:
+                first = max(calls.index(self.spot) - (space - (line - 3)) + 1, 0)
+            for spot in spots[first:first + space - (line - 3)]:
+                attr = curses.A_REVERSE if spot["call"] == self.spot else (
+                    curses.A_DIM if spot["worked"] else 0)
+                put(line, panel_x, spot["text"][:28], attr)
+                line += 1
         per_qso = self.score()["per_qso"]
         rows = self.log.rows()
         end = len(rows)
@@ -1281,7 +1343,7 @@ class App:
 
         put(h - 2, 1, self.msg)
         put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
-                      "<kHz> or <mode> Enter = QSY | Up edit | F5 ATU | F2 ADIF | "
+                      "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn spot | F5 ATU | F2 ADIF | "
                       "F3 Cabrillo | F8 delete | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
         try:
