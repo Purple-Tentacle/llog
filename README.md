@@ -87,7 +87,9 @@ and the callsign is filled in. Esc removes the highlight.
 F6 spots a station on the cluster: the callsign in the call field on the
 current row's frequency, or, if the call field is empty, the last logged QSO
 on the frequency it was logged with. llog asks for an optional comment; Enter
-sends the spot, Esc cancels. A spot is public and cannot be withdrawn.
+sends the spot, Esc cancels. A spot is public and cannot be withdrawn. The
+message line then shows the node's answer: that the spot was accepted (it
+came back from the node), or the node's own text if it refused it.
 
 Add the node to `config.ini`:
 

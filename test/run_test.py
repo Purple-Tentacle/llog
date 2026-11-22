@@ -62,6 +62,9 @@ def fake_cluster(srv):             # DX cluster node: login prompt, then spots
         if not data:
             break
         state["cluster_rx"] += data
+        if b"DX " in data:           # the node refuses the spot
+            conn.sendall(b"Sorry DA2IT-1, you are not registered\r\n"
+                         b"DA2IT-1 de TEST-2 22-Nov-2026 2200Z dxspider >\r\n")
 
 
 csrv = socket.socket(); csrv.bind(("127.0.0.1", 0)); csrv.listen()
@@ -134,7 +137,8 @@ send("\x7f\x7fk3aa\r")                                        # row A kept "DL7"
 send("\x1b[6~"); send("\x1b[6~"); send("\x1b[5~")              # PgDn PgDn PgUp: latest 40m spot
 send("\r", 1.2); send("\r")                                   # take it (QSY + call), log it
 send("\x1b[17~"); send("\x1b")                                # F6: spot last QSO, cancel
-send("\x1b[17~"); send("tnx Qso\r")                            # F6 again, comment, send
+send("\x1b[17~"); send("tnx Qso\r", 1.2)                       # F6 again, comment, send
+assert b"you are not registered" in screen and b"dxspider >" not in screen
 send("\x1b[15~", 1.5)                                         # F5: ATU tune
 send("\x1bOQ"); send("\x1bOR")                            # F2, F3 exports
 send("\x1b[21~", 1.0)                                         # F10 quit
@@ -254,10 +258,15 @@ cl.feed("To ALL de DL1AAA: hello"); cl.feed("DX de garbage")
 assert [(x["call"], x["freq_hz"], x["time"]) for x in cl.spots("20m")] == \
     [("K1ABC", 14027300, "2156")] and len(cl.spots("40m")) == 1 and not cl.spots("2m")
 cl._spots[("K1ABC", "20m")]["seen"] -= 31 * 60; assert not cl.spots("20m")   # expired
+cl.call = "DA2IT-1"; cl._sent = (time.time(), "K9XX")
+cl.feed("DA2IT-1 de TEST-2 22-Nov-2026 2200Z dxspider >"); assert cl.reply == ""
+cl.feed("DX de DA2IT:      14030.0  K9XX         tnx                            2201Z")
+assert cl.reply == "Cluster accepted the spot for K9XX."
+cl.reply = ""; cl.feed("To ALL de DL1AAA: unrelated chatter"); assert cl.reply == ""
 now_utc = datetime.now(timezone.utc)
 cl.feed(f"  14010.0  W1AW        {now_utc:%d-%b-%Y %H%M}Z  sh/dx line                 <DL4DDD>")
 cl.feed("  14011.0  W2OLD       01-Jan-2020 1200Z  long gone                  <DL4DDD>")
-assert [x["call"] for x in cl.spots("20m")] == ["W1AW"]
+assert {x["call"] for x in cl.spots("20m")} == {"W1AW", "K9XX"}   # W2OLD expired
 app = m.App.__new__(m.App)                      # panel logic without a terminal
 c = configparser.ConfigParser(); c.read(os.path.join(EX, "wna.ini"))
 app.scoring = m.score_rules(c); app.freq = lambda: V

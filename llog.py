@@ -391,15 +391,27 @@ class Cluster(threading.Thread):
         self._spots = {}      # (dx call, band) -> spot, newest wins
         self._lock = threading.Lock()
         self._sock = None
+        self.reply = ""       # what the node answered to our last spot
+        self._sent = (0, "")  # (time, dx call) of the spot we sent last
 
     def feed(self, line):
         seen = time.time()
+        waiting = seen - self._sent[0] < 10      # just sent a spot ourselves
         match = SPOT_RE.match(line.strip())
         if match:
             spotter, khz, call, comment, hhmm = match.groups()
+            if (waiting and call.upper() == self._sent[1] and
+                    spotter.split("-")[0].upper() == self.call.split("-")[0]):
+                self.reply = f"Cluster accepted the spot for {call.upper()}."
+                self._sent = (0, "")
         else:
             match = SHDX_RE.match(line)
             if not match:
+                text = line.strip()
+                # anything else right after our spot is the node's answer,
+                # except its command prompt ("CALL de NODE ... >")
+                if waiting and text and not text.endswith(">"):
+                    self.reply = f"Cluster: {text}"
                 return
             khz, call, day, hhmm, comment, spotter = match.groups()
             try:                # an old spot keeps its real age
@@ -426,6 +438,7 @@ class Cluster(threading.Thread):
             sock.sendall((line + "\r\n").encode("latin-1", "replace"))
         except OSError as exc:
             return f"Spot not sent: {exc}"
+        self._sent = (time.time(), call.upper())
         return ""
 
     def spots(self, band):
@@ -1235,7 +1248,8 @@ class App:
 
         def send(comment):
             error = self.cluster.send_spot(hz, call, comment.strip())
-            self.msg = error or f"Spotted {call} on {hz / 1000:.1f} kHz"
+            self.msg = error or (f"Spot for {call} on {hz / 1000:.1f} kHz sent, "
+                                 "waiting for the node ...")
 
         self.prompt = {"text": f"Spot {call} on {hz / 1000:.1f} kHz - comment "
                                "(Enter sends, Esc cancels): ",
@@ -1444,6 +1458,8 @@ class App:
                 self.row = self.rig.vfo      # A/B was pressed on the radio
             if self.rig.tune_info:
                 self.msg, self.rig.tune_info = self.rig.tune_info, ""
+            if self.cluster.reply:
+                self.msg, self.cluster.reply = self.cluster.reply, ""
             self.draw(scr)
             try:
                 ch = scr.get_wch()
