@@ -109,6 +109,20 @@ what is displayed; nothing is fetched again. The panel needs a terminal at
 least 126 columns wide; on narrower terminals it is hidden. Leave `host`
 empty to switch the cluster off.
 
+### Testing the cluster functions without a real node
+
+Do not send made-up spots to a real cluster: they are passed on to nodes and
+users worldwide. `tools/fake_cluster.py` is a small local cluster for this:
+
+```
+python3 tools/fake_cluster.py
+```
+
+Then set `host = 127.0.0.1` and `port = 7300` in the `[cluster]` section. It
+sends a made-up spot every 20 seconds, answers the startup `sh/dx`, and
+echoes the spots you send with F6. With `call = REFUSE` it refuses your
+spots, so you can see how llog shows that.
+
 ## Configuration
 
 Station data and contest data live in separate files under `~/.config/llog/`:
