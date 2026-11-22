@@ -201,6 +201,13 @@ def score_report(result, rules):
     return "\n".join(lines)
 
 
+def rig_retune(cfg):
+    how = cfg["rig"].get("vfo_switch", "retune").strip().lower()
+    if how not in ("retune", "vfo"):
+        sys.exit("vfo_switch in config.ini must be 'retune' or 'vfo'")
+    return how == "retune"
+
+
 def ascii_only(text):
     return unicodedata.normalize("NFKD", text or "").encode(
         "ascii", "ignore").decode()
@@ -208,18 +215,24 @@ def ascii_only(text):
 
 # --------------------------------------------------------------------- rig
 class Rig(threading.Thread):
-    """Polls rigctld for frequency/mode of VFO A and B and sends commands.
+    """Polls rigctld for frequency/mode and sends commands for two "VFO" rows.
 
-    Plain rigctld: only the radio's active VFO is polled; the other VFO
-    keeps its last known values. rigctld --vfo: both VFOs are polled.
+    retune=True (default): the radio's own VFO B is never used. Each row's
+    frequency and mode are remembered here, and switching rows retunes the
+    radio's active VFO. Works the same on every radio.
+
+    retune=False: rows are the radio's VFO A and VFO B and switching sends
+    a VFO select. Only for radios where VFO B can become the active VFO.
+    With rigctld --vfo both VFOs are polled, otherwise only the active one.
     """
 
-    def __init__(self, host, port):
+    def __init__(self, host, port, retune=True):
         super().__init__(daemon=True)
         self.addr = (host, port)
+        self.retune = retune
         self.freq = {"A": None, "B": None}
         self.mode = {"A": None, "B": None}      # raw Hamlib mode, e.g. USB
-        self.vfo = "A"                          # the radio's active VFO
+        self.vfo = "A"                          # the active row
         self.vfo_mode = False                   # rigctld started with --vfo
         self.online = False
         self.error = ""
@@ -236,8 +249,16 @@ class Rig(threading.Thread):
 
     def select(self, vfo):
         with self._lock:
-            self.vfo = vfo
-            self._todo.put(("V", vfo, ""))
+            old, self.vfo = self.vfo, vfo
+            if not self.retune:
+                self._todo.put(("V", vfo, ""))
+                return
+            # bring the radio to what this row was last tuned to; a row that
+            # was never used simply takes over the current frequency and mode
+            if self.freq[vfo]:
+                self._todo.put(("F", vfo, str(self.freq[vfo])))
+            if self.mode[vfo] and self.mode[vfo] != self.mode[old]:
+                self._todo.put(("M", vfo, f"{self.mode[vfo]} -1"))
 
     def _ask(self, line, extra_lines=0):
         self._sock.sendall((line + "\n").encode())
@@ -251,22 +272,28 @@ class Rig(threading.Thread):
             self._file.readline()
         return first
 
+    def _vfo_arg(self, vfo):
+        """VFO argument for rigctld --vfo; empty for a plain rigctld."""
+        if not self.vfo_mode:
+            return ""
+        return " currVFO" if self.retune else f" VFO{vfo}"
+
     def _command(self, cmd, vfo, args):
         if cmd == "V":
             self._ask(f"V VFO{vfo}")
-        elif self.vfo_mode:
-            self._ask(f"{cmd} VFO{vfo} {args}")
-        else:                      # plain mode: acts on the active VFO
-            self._ask(f"{cmd} {args}")
+        else:
+            self._ask(f"{cmd}{self._vfo_arg(vfo)} {args}")
 
     def _poll(self, vfo):
-        arg = f" VFO{vfo}" if self.vfo_mode else ""
-        freq = self._ask("f" + arg)
-        mode = self._ask("m" + arg, extra_lines=1)
-        if freq:
-            self.freq[vfo] = int(float(freq))
-        if mode:
-            self.mode[vfo] = mode
+        freq = self._ask("f" + self._vfo_arg(vfo))
+        mode = self._ask("m" + self._vfo_arg(vfo), extra_lines=1)
+        with self._lock:
+            # skip if the row changed meanwhile: the answer is for the old row
+            if self._todo.empty() and (self.vfo == vfo or not self.retune):
+                if freq:
+                    self.freq[vfo] = int(float(freq))
+                if mode:
+                    self.mode[vfo] = mode
         return bool(freq)
 
     def run(self):
@@ -279,13 +306,14 @@ class Rig(threading.Thread):
                     self.vfo_mode = answer.endswith("1")
                 while not self._todo.empty():
                     self._command(*self._todo.get())
-                active = self._ask("v") or ""
-                with self._lock:   # follow the radio's A/B button
-                    if active in ("VFOA", "VFOB") and self._todo.empty():
-                        self.vfo = active[-1]
+                if not self.retune:
+                    active = self._ask("v") or ""
+                    with self._lock:   # follow the radio's A/B button
+                        if active in ("VFOA", "VFOB") and self._todo.empty():
+                            self.vfo = active[-1]
                 vfo = self.vfo
                 ok = self._poll(vfo)
-                if self.vfo_mode:
+                if self.vfo_mode and not self.retune:
                     self._poll("B" if vfo == "A" else "A")
                 self.online = ok
                 self.error = "" if ok else "rig not answering"
@@ -549,7 +577,8 @@ def load_config(config_dir, contest):
     cfg = configparser.ConfigParser()
     cfg.read_dict({"station": {"call": "", "email": ""},
                    "qrz": {"username": "", "password": ""},
-                   "rig": {"host": "127.0.0.1", "port": "4532"},
+                   "rig": {"host": "127.0.0.1", "port": "4532",
+                           "vfo_switch": "retune"},
                    "contest": {"contest": "", "exchange_sent": "",
                                "category_operator": "SINGLE-OP",
                                "email": "", "specific": "",
@@ -647,7 +676,8 @@ class App:
         self.rules = dupe_rules(cfg)
         self.scoring = score_rules(cfg)
         self._score = (None, None)   # (log state, result)
-        self.rig = Rig(cfg["rig"]["host"], cfg["rig"].getint("port"))
+        self.rig = Rig(cfg["rig"]["host"], cfg["rig"].getint("port"),
+                       retune=rig_retune(cfg))
         self.qrz = Qrz(os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
                        os.environ.get("QRZ_PASSWORD", cfg["qrz"]["password"]))
         # one entry row per VFO
@@ -767,7 +797,7 @@ class App:
         self.row = "B" if self.row == "A" else "A"
         if self.rig.online:
             self.rig.select(self.row)
-        self.msg = f"VFO {self.row}"
+        self.msg = f"Row {self.row}"
 
     def enter(self):
         call = self.val["call"]
@@ -1170,6 +1200,7 @@ def main():
         stem = os.path.splitext(os.path.basename(args.contest))[0].lower()
         args.logfile = stem + ".db"
     dupes, scoring = dupe_rules(cfg), score_rules(cfg)   # fail early
+    rig_retune(cfg)
     log = Log(args.logfile)
     if args.score:
         print(score_report(compute_score(log.rows(), dupes, scoring), scoring))

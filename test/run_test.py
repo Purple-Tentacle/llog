@@ -94,7 +94,8 @@ send("\x7f" * 2); send("\r")                                  # bad time refused
 assert b"Time must look like" in screen
 send("59\r")                                                  # time fixed, saved
 send("dl7");  send("\\", 1.2)                                  # leave text in row A, go to VFO B
-send("db1xx\r"); send("\\", 1.2)                              # QSO on VFO B, back to A
+send("432200\r", 1.2); send("fm\r", 1.2)                       # row B: own frequency and mode
+send("db1xx\r"); send("\\", 1.2)                              # QSO in row B, back to A
 send("\x7f\x7fk3aa\r")                                        # row A kept "DL7": DLK3AA
 send("\x1bOQ"); send("\x1bOR")                            # F2, F3 exports
 send("\x1b[21~", 1.0)                                         # F10 quit
@@ -107,7 +108,10 @@ assert rows == [("DL1ABC", 14060000, "CW", "599", "599", "N99", "O05"),
                 ("DK2XYZ", 7040000, "CW", "57", "55", "N99", "O05"),
                 ("DB1XX", 432200000, "FM", "59", "59", "N99", ""),
                 ("DK3AA", 7030500, "SSB", "59", "59", "N99", "")], rows
-assert "V VFOB" in state["cmds"] and "V VFOA" in state["cmds"]
+# default vfo_switch = retune: no VFO select, row A is retuned when coming back
+assert not any(c.startswith("V ") for c in state["cmds"])
+assert state["cmds"].count("F 7030500") == 2 and "M LSB -1" in state["cmds"]
+assert "F 432200000" in state["cmds"] and "M FM 0" in state["cmds"]
 assert sqlite3.connect(db).execute(
     "SELECT ts FROM qso WHERE call='DK2XYZ'").fetchone()[0].endswith(":59")
 assert "F 7030500" in state["cmds"] and "M LSB 0" in state["cmds"], state["cmds"][-20:]
@@ -141,10 +145,11 @@ def fake_vfo_rigctld(srv):
         else: conn.sendall(b"RPRT 0\n")
 srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen()
 threading.Thread(target=fake_vfo_rigctld, args=(srv,), daemon=True).start()
-rig = m.Rig("127.0.0.1", srv.getsockname()[1]); rig.start(); time.sleep(1)
+rig = m.Rig("127.0.0.1", srv.getsockname()[1], retune=False); rig.start(); time.sleep(1)
 assert rig.vfo_mode and rig.online and rig.freq == {"A": 144300000, "B": 432200000}
 rig.set_freq("B", 433500000); time.sleep(1)
 assert "F VFOB 433500000" in vstate["cmds"] and rig.freq["B"] == 433500000
+rig.select("B"); time.sleep(1); assert "V VFOB" in vstate["cmds"]
 # dupe rules
 from datetime import datetime, timezone, timedelta
 lg = m.Log(os.path.join(work, "d.db"))

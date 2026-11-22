@@ -6,7 +6,7 @@ One Python file, standard library only, nothing to compile.
 - Callsign entry with QRZ.com lookup (XML API, needs a QRZ XML subscription for full data)
 - Live frequency and mode from the radio through Hamlib's `rigctld`
 - Typing a frequency in the logger tunes the radio
-- Two entry rows, one for VFO A and one for VFO B
+- Two entry rows with their own frequency and mode
 - SQLite log file, ADIF and Cabrillo export
 
 Dupe checking and scoring are configurable per contest.
@@ -37,24 +37,28 @@ python3 llog.py                     # lists the configured contests
 Without a running `rigctld` the logger still works; a typed frequency is then
 used for the log only.
 
-## Two VFOs
+## Two entry rows (A and B)
 
-There are two entry rows, one for VFO A and one for VFO B. Each row shows its
-VFO's frequency and mode and keeps its own callsign and exchange, so a
-half-typed QSO in row A stays there while you work someone in row B. `\`
-switches to the other row and makes that VFO the active one on the radio.
-A QSO is logged with the frequency and mode of the row it was entered in, and
-typing a frequency or mode tunes the VFO of the current row. If you press A/B
-on the radio, llog follows when the radio reports it.
+There are two entry rows. Each row has its own frequency and mode and keeps
+its own callsign and exchange, so a half-typed QSO in row A stays there while
+you work someone in row B. `\` switches to the other row. A QSO is logged
+with the frequency and mode of the row it was entered in, and typing a
+frequency or mode changes the current row only.
 
-Both radios receive on the active VFO only; this is quick switching between
-two frequencies or modes, not listening to both.
+How the radio follows a row switch is set by `vfo_switch` in the `[rig]`
+section of `config.ini`:
 
-With a plain `rigctld`, llog reads only the active VFO, and the other row
-shows the last values llog saw (empty until you have switched to it once).
-Start `rigctld` with `--vfo` to have both VFOs read continuously. On some
-Icom radios with older Hamlib versions that makes the radio flip briefly to
-the other VFO on every read; leave `--vfo` away in that case.
+| Value | Behaviour |
+| --- | --- |
+| `retune` (default) | llog remembers frequency and mode of both rows and retunes the radio's active VFO when you switch. The radio's own VFO B is never touched. A row you have not used yet starts on the current frequency. Works on every radio. |
+| `vfo` | Row A is the radio's VFO A and row B its VFO B; switching sends a VFO select to the radio. Only for radios where VFO B can become the active VFO. With `rigctld --vfo` both VFOs are read continuously, otherwise only the active one. |
+
+Use `retune` for Elecraft radios (KX2, KX3, K3): there VFO A is always the
+active VFO and VFO B is only the split transmit frequency, so `vfo` does not
+work.
+
+Both of your rows share one receiver; this is quick switching between two
+frequencies or modes, not listening to both.
 
 ## Configuration
 
@@ -62,7 +66,7 @@ Station data and contest data live in separate files under `~/.config/llog/`:
 
 | File | Content |
 | --- | --- |
-| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port |
+| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port, `vfo_switch` |
 | `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, dupe rules, scoring |
 
 Both are created by a few questions the first time they are needed: the
@@ -167,7 +171,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
 | F2 | Export ADIF (`<logfile>.adi`) |
 | F3 | Export Cabrillo (`<CALL>-<date>-1.cbr`) |
-| `\` | Switch to the other VFO and its entry row |
+| `\` | Switch to the other entry row (A/B) |
 | Up / Down | Edit a logged QSO in the list (see below) |
 | F8 | Delete the last QSO, or the selected one while editing |
 | F10 or Ctrl-X | Quit |
