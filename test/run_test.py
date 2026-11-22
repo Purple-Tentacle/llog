@@ -73,7 +73,7 @@ send("7030.5\r", 1.2)                                         # QSY via logger
 send("ssb\r", 1.2)                                            # mode via logger
 send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\r")    # QSO 2 with RSTs
 send("oops1x\r"); send("\x1b[19~"); send("y")                 # QSO 3, F8 delete
-send("\x1bOQ"); send("\x1bOR"); send("\x1bOS")                            # F2, F3 exports
+send("\x1bOQ"); send("\x1bOR")                            # F2, F3 exports
 send("\x1b[21~", 1.0)                                         # F10 quit
 os.waitpid(pid, 0)
 
@@ -84,7 +84,7 @@ assert rows == [("DL1ABC/P", 14060000, "CW", "599", "599", "N99", "O05"),
                 ("DK2XYZ", 7030500, "SSB", "57", "55", "N99", "NM")], rows
 assert "F 7030500" in state["cmds"] and "M LSB 0" in state["cmds"], state["cmds"][-20:]
 for name in sorted(os.listdir(work)):
-    if name.endswith((".adi", ".cbr", ".stf")):
+    if name.endswith((".adi", ".cbr")):
         print("-----", name); print(open(os.path.join(work, name)).read())
 assert b"RIG ok" in screen
 

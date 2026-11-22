@@ -6,7 +6,7 @@ One Python file, standard library only, nothing to compile.
 - Callsign entry with QRZ.com lookup (XML API, needs a QRZ XML subscription for full data)
 - Live frequency and mode from the radio through Hamlib's `rigctld`
 - Typing a frequency in the logger tunes the radio
-- SQLite log file, ADIF, Cabrillo and STF export
+- SQLite log file, ADIF and Cabrillo export
 
 Dupe checking is configurable per contest. Scoring is not implemented yet.
 
@@ -110,22 +110,14 @@ dupe_minutes = 0
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
 | F2 | Export ADIF (`<logfile>.adi`) |
 | F3 | Export Cabrillo (`<CALL>-<date>-1.cbr`) |
-| F4 | Export STF (`<CALL>_<MM>_<YYYY>_<contest>.stf`) |
 | F8 | Delete last QSO |
 | F10 or Ctrl-X | Quit |
 
 Exports also work without the UI:
 
 ```
-python3 llog.py wsa wsa-2026-12.db --export-adif out.adi --export-cabrillo out.cbr --export-stf out.stf
+python3 llog.py wsa wsa-2026-12.db --export-adif out.adi --export-cabrillo out.cbr
 ```
-
-## STF export
-
-The STF export was written from a published example file, not from the
-format specification, and has not been checked by a contest organiser.
-Bands are written in metres (`2`) and 70 cm as `70`; empty fields as `-`.
-Send a test log to the organiser before relying on it, or use Cabrillo.
 
 ## Exchange
 

@@ -377,36 +377,6 @@ class Log:
             out.write("\n".join(lines) + "\n")
         return path
 
-    def export_stf(self, path, cfg):
-        """STF1 (Stuetzerbach format). Empty fields are written as '-'."""
-        con = cfg["contest"]
-        now = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
-        rows = self.rows()
-        lines = ["STF1", f'#Data written "{now}"',
-                 "#STF-Export generated with llog 0.2", "Header",
-                 f"Contest      {con.get('contest', '')}",
-                 f"MyCall       {cfg['station']['call']}",
-                 f"Category     {con.get('category_operator', 'SINGLE-OP')}"]
-        if con.get("email"):
-            lines.append(f"EMail        {con['email']}")
-        if con.get("specific"):
-            lines.append(f"Specific     {con['specific']}")
-        lines += [f"ClaimedQSO   {len(rows)}",
-                  "QsoOrder     Date Time Band Mode Call SRst Sent RRst Rcvd",
-                  "EndHeader", "QsoList"]
-        for q in rows:
-            ts = q["ts"]
-            band = band_of(q["freq_hz"] or 0).rstrip("cm") or "-"
-            lines.append("{} {} {:>4} {:<4} {:<13} {:<3} {:<6} {:<3} {}".format(
-                ts[0:4] + ts[5:7] + ts[8:10], ts[11:13] + ts[14:16], band,
-                q["mode"], q["call"], q["rst_s"] or "-", q["exch_s"] or "-",
-                q["rst_r"] or "-", q["exch_r"].replace(" ", "_") or "-"))
-        lines.append("EndQSOList")
-        with open(path, "w", encoding="ascii", errors="replace",
-                  newline="\n") as out:
-            out.write("\n".join(lines) + "\n")
-        return path
-
 
 # ------------------------------------------------------------------ config
 def ask(prompt, default=""):
@@ -603,14 +573,6 @@ class App:
         try:
             if kind == "adif":
                 path = self.log.export_adif(stem + ".adi")
-            elif kind == "stf":
-                rows = self.log.rows()
-                ts = rows[0]["ts"] if rows else "0000-00"
-                contest = self.cfg["contest"].get("contest") or "LOG"
-                name = (f"{self.mycall.replace('/', '-')}_{ts[5:7]}_{ts[0:4]}_"
-                        f"{contest.replace(' ', '-')}.stf")
-                path = self.log.export_stf(
-                    os.path.join(os.path.dirname(self.log.path), name), self.cfg)
             else:
                 rows = self.log.rows()
                 day = rows[0]["ts"][:10] if rows else "empty"
@@ -630,8 +592,6 @@ class App:
             self.export("adif")
         elif ch == curses.KEY_F3:
             self.export("cabrillo")
-        elif ch == curses.KEY_F4:
-            self.export("stf")
         elif ch == curses.KEY_F8:
             rows = self.log.rows(last=1)
             if rows:
@@ -735,7 +695,7 @@ class App:
         put(h - 2, 1, self.msg)
         put(h - 1, 0, " Enter log | Tab next | Space call>exch | Esc clear | "
                       "<kHz> Enter = QSY | CW/SSB/FM Enter = mode | F2 ADIF | "
-                      "F3 Cabrillo | F4 STF | F8 del last | F10 quit ".ljust(w - 1),
+                      "F3 Cabrillo | F8 del last | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
         try:
             scr.move(*cursor)
@@ -779,7 +739,6 @@ def main():
     ap.add_argument("--config-dir", default=DEFAULT_CONFIG_DIR)
     ap.add_argument("--export-adif", metavar="FILE")
     ap.add_argument("--export-cabrillo", metavar="FILE")
-    ap.add_argument("--export-stf", metavar="FILE")
     args = ap.parse_args()
 
     if not args.contest:
@@ -795,9 +754,7 @@ def main():
         args.logfile = stem + ".db"
     dupe_rules(cfg)                      # fail early on a bad setting
     log = Log(args.logfile)
-    if args.export_adif or args.export_cabrillo or args.export_stf:
-        if args.export_stf:
-            print("STF:", log.export_stf(args.export_stf, cfg))
+    if args.export_adif or args.export_cabrillo:
         if args.export_adif:
             print("ADIF:", log.export_adif(args.export_adif))
         if args.export_cabrillo:
