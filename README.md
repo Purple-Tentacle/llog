@@ -60,13 +60,24 @@ work.
 Both of your rows share one receiver; this is quick switching between two
 frequencies or modes, not listening to both.
 
+## ATU tune
+
+F5 starts an antenna tuner cycle on the radio, the same as pressing its ATU
+button. The radio transmits a carrier while it tunes, so check the frequency
+first. The command is chosen by `tune_command` in the `[rig]` section:
+
+| Value | Command sent to rigctld |
+| --- | --- |
+| `auto` (default) | KX2: `w SWT20;`, KX3: `w SWT44;` (the radio's ATU button), any other radio: `G TUNE` (Hamlib's generic tune operation) |
+| anything else | sent to rigctld as written, e.g. `w SWT20;` |
+
 ## Configuration
 
 Station data and contest data live in separate files under `~/.config/llog/`:
 
 | File | Content |
 | --- | --- |
-| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port, `vfo_switch` |
+| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port, `vfo_switch`, `tune_command` |
 | `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, dupe rules, scoring |
 
 Both are created by a few questions the first time they are needed: the
@@ -172,6 +183,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | F2 | Export ADIF (`<logfile>.adi`) |
 | F3 | Export Cabrillo (`<CALL>-<date>-1.cbr`) |
 | `\` | Switch to the other entry row (A/B) |
+| F5 | Start an ATU tune cycle on the radio (it transmits a carrier) |
 | Up / Down | Edit a logged QSO in the list (see below) |
 | F8 | Delete the last QSO, or the selected one while editing |
 | F10 or Ctrl-X | Quit |

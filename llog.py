@@ -236,6 +236,7 @@ class Rig(threading.Thread):
         self.vfo_mode = False                   # rigctld started with --vfo
         self.online = False
         self.error = ""
+        self.tune_info = ""                     # result of the last tune()
         self._todo = queue.Queue()
         self._lock = threading.Lock()
         self._sock = None
@@ -259,6 +260,46 @@ class Rig(threading.Thread):
                 self._todo.put(("F", vfo, str(self.freq[vfo])))
             if self.mode[vfo] and self.mode[vfo] != self.mode[old]:
                 self._todo.put(("M", vfo, f"{self.mode[vfo]} -1"))
+
+    # ATU tune commands by Hamlib model name; anything else gets Hamlib's
+    # generic tune operation
+    TUNE_COMMANDS = {"KX2": "w SWT20;", "KX3": "w SWT44;"}
+
+    def tune(self, command="auto"):
+        """Starts an ATU tune cycle. Runs on its own connection so that a
+        slow or missing answer cannot disturb the polling connection."""
+        threading.Thread(target=self._tune, args=(command,), daemon=True).start()
+
+    def _raw(self, line, until=None):
+        with socket.create_connection(self.addr, timeout=4) as sock:
+            sock.sendall((line + "\n").encode())
+            data = b""
+            try:
+                while until is None or until not in data:
+                    chunk = sock.recv(4096)
+                    if not chunk or until is None:
+                        data += chunk
+                        break
+                    data += chunk
+            except OSError:
+                pass
+            return data.decode("utf-8", "replace")
+
+    def _tune(self, command):
+        try:
+            if command == "auto":
+                caps = self._raw("\\dump_caps", until=b"Mfg name")
+                model = ""
+                for line in caps.splitlines():
+                    if line.startswith("Model name:"):
+                        model = line.split(":", 1)[1].strip()
+                command = self.TUNE_COMMANDS.get(
+                    model.upper(),
+                    "G currVFO TUNE" if self.vfo_mode else "G TUNE")
+            self.tune_info = f"ATU tune sent: {command}"
+            self._raw(command)
+        except OSError as exc:
+            self.tune_info = f"ATU tune failed: {exc}"
 
     def _ask(self, line, extra_lines=0):
         self._sock.sendall((line + "\n").encode())
@@ -578,7 +619,7 @@ def load_config(config_dir, contest):
     cfg.read_dict({"station": {"call": "", "email": ""},
                    "qrz": {"username": "", "password": ""},
                    "rig": {"host": "127.0.0.1", "port": "4532",
-                           "vfo_switch": "retune"},
+                           "vfo_switch": "retune", "tune_command": "auto"},
                    "contest": {"contest": "", "exchange_sent": "",
                                "category_operator": "SINGLE-OP",
                                "email": "", "specific": "",
@@ -962,6 +1003,14 @@ class App:
             self.export("adif")
         elif ch == curses.KEY_F3:
             self.export("cabrillo")
+        elif ch == curses.KEY_F5:
+            if self.rig.online:
+                self.msg = "ATU tune ..."
+                self.rig.tune_info = ""
+                self.rig.tune(self.cfg["rig"].get("tune_command", "auto").strip()
+                              or "auto")
+            else:
+                self.msg = "Rig offline - cannot start ATU tune."
         elif ch == curses.KEY_UP:
             self.select(-1)
         elif ch == curses.KEY_DOWN:
@@ -1135,7 +1184,7 @@ class App:
 
         put(h - 2, 1, self.msg)
         put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
-                      "<kHz> or <mode> Enter = QSY | Up edit | F2 ADIF | "
+                      "<kHz> or <mode> Enter = QSY | Up edit | F5 ATU | F2 ADIF | "
                       "F3 Cabrillo | F8 delete | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
         try:
@@ -1161,6 +1210,8 @@ class App:
         while True:
             if self.rig.online and self.rig.vfo != self.row:
                 self.row = self.rig.vfo      # A/B was pressed on the radio
+            if self.rig.tune_info:
+                self.msg, self.rig.tune_info = self.rig.tune_info, ""
             self.draw(scr)
             try:
                 ch = scr.get_wch()

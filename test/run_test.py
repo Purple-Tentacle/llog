@@ -10,6 +10,11 @@ state = {"vfo": "A", "freq": {"A": 14060000, "B": 432200000},
 def fake_rigctld(server):          # plain rigctld (no --vfo): acts on active VFO
     while True:
         conn, _ = server.accept()
+        threading.Thread(target=fake_client, args=(conn,), daemon=True).start()
+
+
+def fake_client(conn):
+    if True:
         f = conn.makefile("r")
         for line in f:
             line = line.strip()
@@ -23,6 +28,11 @@ def fake_rigctld(server):          # plain rigctld (no --vfo): acts on active VF
                 conn.sendall(f"VFO{v}\n".encode())
             elif line == "\\chk_vfo":
                 conn.sendall(b"CHKVFO 0\n")
+            elif line == "\\dump_caps":
+                conn.sendall(b"Caps dump for model: 2044\nModel name:\tKX2\n"
+                             b"Mfg name:\tElecraft\n")
+            elif line.startswith("w "):
+                conn.sendall(b"\n")
             elif line.startswith("V VFO"):
                 state["vfo"] = line[-1]; conn.sendall(b"RPRT 0\n")
             elif line.startswith("F "):
@@ -97,6 +107,7 @@ send("dl7");  send("\\", 1.2)                                  # leave text in r
 send("432200\r", 1.2); send("fm\r", 1.2)                       # row B: own frequency and mode
 send("db1xx\r"); send("\\", 1.2)                              # QSO in row B, back to A
 send("\x7f\x7fk3aa\r")                                        # row A kept "DL7": DLK3AA
+send("\x1b[15~", 1.5)                                         # F5: ATU tune
 send("\x1bOQ"); send("\x1bOR")                            # F2, F3 exports
 send("\x1b[21~", 1.0)                                         # F10 quit
 os.waitpid(pid, 0)
@@ -112,6 +123,7 @@ assert rows == [("DL1ABC", 14060000, "CW", "599", "599", "N99", "O05"),
 assert not any(c.startswith("V ") for c in state["cmds"])
 assert state["cmds"].count("F 7030500") == 2 and "M LSB -1" in state["cmds"]
 assert "F 432200000" in state["cmds"] and "M FM 0" in state["cmds"]
+assert "w SWT20;" in state["cmds"] and b"sent: w SWT20;" in screen
 assert sqlite3.connect(db).execute(
     "SELECT ts FROM qso WHERE call='DK2XYZ'").fetchone()[0].endswith(":59")
 assert "F 7030500" in state["cmds"] and "M LSB 0" in state["cmds"], state["cmds"][-20:]
