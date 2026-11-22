@@ -10,6 +10,7 @@ Hamlib's rigctld, callsign lookup through the QRZ.com XML API.
 import argparse
 import configparser
 import curses
+import fnmatch
 import getpass
 import os
 import queue
@@ -112,6 +113,92 @@ def dupe_rules(cfg):
                 "minutes": con.getint("dupe_minutes", 0)}
     except ValueError as exc:
         sys.exit(f"Bad dupe setting in the contest file: {exc}")
+
+
+def score_rules(cfg):
+    """points = FM:2, SSB:4, CW:6   multipliers = N[0-9][0-9], WN, ..."""
+    con = cfg["contest"]
+    points = {}
+    try:
+        for item in con.get("points", "").replace(",", " ").split():
+            mode, value = item.split(":")
+            points[mode.upper()] = int(value)
+    except ValueError:
+        sys.exit("points must look like 'FM:2, SSB:4, CW:6' "
+                 "(mode, PH, DIG or * followed by ':' and a number)")
+    mults = con.get("multipliers", "").upper().replace(",", " ").split()
+    per = con.get("mult_per", "band").strip().lower()
+    if per not in ("band", "contest"):
+        sys.exit("mult_per must be 'band' or 'contest'")
+    return {"configured": bool(points or mults), "points": points or {"*": 1},
+            "mults": mults, "mult_per": per}
+
+
+def qso_points(rules, mode):
+    table = rules["points"]
+    return table.get(mode, table.get(mode_group(mode), table.get("*", 0)))
+
+
+def mult_key(rules, exch, freq_hz):
+    """Multiplier this exchange earns as (band, value), or None."""
+    value = (exch or "").strip().upper()
+    if value and any(fnmatch.fnmatchcase(value, pat) for pat in rules["mults"]):
+        band = band_of(freq_hz or 0) if rules["mult_per"] == "band" else ""
+        return (band, value)
+    return None
+
+
+def compute_score(rows, dupes, rules):
+    """Scores a list of QSO rows. Dupes get no points and no multiplier."""
+    worked, mults = {}, set()
+    per_qso, bands = {}, {}
+    for q in rows:
+        band = band_of(q["freq_hz"] or 0)
+        stat = bands.setdefault(band, {"qsos": 0, "dupes": 0, "points": 0,
+                                       "mults": 0})
+        stat["qsos"] += 1
+        key = [base_call(q["call"]) if dupes["ignore_suffix"] else q["call"]]
+        if dupes["check"] in ("band", "band_mode"):
+            key.append(band)
+        if dupes["check"] in ("mode", "band_mode"):
+            key.append(mode_group(q["mode"]))
+        if dupes["exchange"]:
+            key.append(q["exch_r"])
+        key = tuple(key)
+        when = datetime.strptime(q["ts"], "%Y-%m-%d %H:%M:%S")
+        last = worked.get(key)
+        if dupes["check"] != "off" and last and (
+                not dupes["minutes"]
+                or (when - last).total_seconds() < dupes["minutes"] * 60):
+            stat["dupes"] += 1
+            per_qso[q["id"]] = (0, True, False)
+            continue
+        worked[key] = when
+        points = qso_points(rules, q["mode"])
+        mult = mult_key(rules, q["exch_r"], q["freq_hz"])
+        new_mult = mult is not None and mult not in mults
+        if new_mult:
+            mults.add(mult)
+            stat["mults"] += 1
+        stat["points"] += points
+        per_qso[q["id"]] = (points, False, new_mult)
+    total_points = sum(b["points"] for b in bands.values())
+    return {"points": total_points, "mults": len(mults), "seen": mults,
+            "score": total_points * len(mults) if rules["mults"] else total_points,
+            "per_qso": per_qso, "bands": bands}
+
+
+def score_report(result, rules):
+    lines = [f"{'Band':<6}{'QSOs':>6}{'Dupes':>7}{'Points':>8}{'Mults':>7}"]
+    for band, b in result["bands"].items():
+        lines.append(f"{band or '?':<6}{b['qsos']:>6}{b['dupes']:>7}"
+                     f"{b['points']:>8}{b['mults']:>7}")
+    if rules["mults"]:
+        lines.append(f"Score: {result['points']} points x {result['mults']} "
+                     f"multipliers = {result['score']}")
+    else:
+        lines.append(f"Score: {result['score']} points")
+    return "\n".join(lines)
 
 
 def ascii_only(text):
@@ -359,6 +446,10 @@ class Log:
         lines = ["START-OF-LOG: 3.0", f"CONTEST: {cab.get('contest', '')}",
                  f"CALLSIGN: {mycall}",
                  f"CATEGORY-OPERATOR: {cab.get('category_operator', 'SINGLE-OP')}"]
+        rules = score_rules(cfg)
+        if rules["configured"]:
+            result = compute_score(self.rows(), dupe_rules(cfg), rules)
+            lines.append(f"CLAIMED-SCORE: {result['score']}")
         if cab.get("email"):
             lines.append(f"EMAIL: {cab['email']}")
         if cab.get("specific"):
@@ -420,7 +511,9 @@ def load_config(config_dir, contest):
                                "dupe_check": "band",
                                "dupe_ignore_suffix": "no",
                                "dupe_exchange": "no",
-                               "dupe_minutes": "0"}})
+                               "dupe_minutes": "0",
+                               "points": "", "multipliers": "",
+                               "mult_per": "band"}})
     station_file = os.path.join(config_dir, "config.ini")
     if os.path.exists(station_file):
         cfg.read(station_file)
@@ -454,9 +547,15 @@ def load_config(config_dir, contest):
         con["dupe_check"] = ask(
             "Dupe check: band / band_mode / mode / once / off",
             con["dupe_check"]).lower()
+        con["points"] = ask(
+            "QSO points per mode, e.g. 'FM:2, SSB:4, CW:6' ('-' = 1 per QSO)",
+            con["points"])
+        con["multipliers"] = ask(
+            "Multipliers: received exchanges that count, e.g. "
+            "'N[0-9][0-9], WN' or '*' for all ('-' = none)", con["multipliers"])
         write_ini(contest_file, cfg, ("contest",))
-        print("More dupe options (dupe_ignore_suffix, dupe_exchange, "
-              "dupe_minutes) can be edited in that file.\n")
+        print("More options (dupe_ignore_suffix, dupe_exchange, dupe_minutes, "
+              "mult_per) can be edited in that file.\n")
     if not cfg["contest"]["email"]:
         cfg["contest"]["email"] = cfg["station"].get("email", "")
     return cfg
@@ -473,6 +572,8 @@ class App:
         self.cfg, self.log = cfg, log
         self.mycall = cfg["station"]["call"]
         self.rules = dupe_rules(cfg)
+        self.scoring = score_rules(cfg)
+        self._score = (None, None)   # (log state, result)
         self.dupe_ok = ""     # callsign whose dupe warning was confirmed
         self.rig = Rig(cfg["rig"]["host"], cfg["rig"].getint("port"))
         self.qrz = Qrz(os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
@@ -510,6 +611,20 @@ class App:
             return None
         return self.log.find_dupe(self.rules, call, self.freq(), self.mode(),
                                   self.val["exch"].strip())
+
+    def score(self):
+        state = self.log.db.total_changes
+        if self._score[0] != state:
+            self._score = (state, compute_score(self.log.rows(), self.rules,
+                                                self.scoring))
+        return self._score[1]
+
+    def new_mult(self):
+        """Multiplier value if the exchange being typed is a new one."""
+        if not is_call(self.val["call"]):
+            return None
+        key = mult_key(self.scoring, self.val["exch"], self.freq())
+        return key[1] if key and key not in self.score()["seen"] else None
 
     @staticmethod
     def dupe_text(q):
@@ -628,6 +743,14 @@ class App:
             self.dupe_ok = ""
         return True
 
+    def score_text(self):
+        if not self.scoring["configured"]:
+            return ""
+        r = self.score()
+        if self.scoring["mults"]:
+            return f"Score: {r['points']}x{r['mults']}={r['score']}  |  "
+        return f"Score: {r['score']}  |  "
+
     # ---- drawing
     def draw(self, scr):
         scr.erase()
@@ -643,20 +766,23 @@ class App:
         rig = "RIG ok" if self.rig.online else "RIG offline (manual)"
         utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") + "Z"
         head = (f" {self.mycall}  {self.cfg['contest']['contest']}  |  {fmt_freq(self.freq())} kHz  {self.mode()}  "
-                f"{band_of(self.freq() or 0)}  |  {rig}  |  QSOs: "
+                f"{band_of(self.freq() or 0)}  |  {rig}  |  {self.score_text()}QSOs: "
                 f"{self.log.count()}  |  {utc} ")
         put(0, 0, head.ljust(w - 1), curses.A_REVERSE)
 
         put(2, 1, f"{'#':>4} {'UTC':<16} {'Call':<13} {'kHz':>9} {'Mode':<5}"
-                  f"{'Sent':<5}{'Exch':<7}{'Rcvd':<5}{'Exch':<10} Name",
+                  f"{'Sent':<5}{'Exch':<7}{'Rcvd':<5}{'Exch':<10}{'Pts':<6}Name",
             curses.A_BOLD)
         space = max(h - 11, 1)
+        per_qso = self.score()["per_qso"]
         for i, q in enumerate(self.log.rows(last=space)):
+            points, is_dupe, is_mult = per_qso.get(q["id"], (0, False, False))
+            pts = "DUPE" if is_dupe else f"{points}{'+M' if is_mult else ''}"
             put(3 + i, 1,
                 f"{q['id']:>4} {q['ts'][:16]:<16} {q['call']:<13} "
                 f"{(q['freq_hz'] or 0) / 1000:>9.1f} {q['mode']:<5}"
                 f"{q['rst_s']:<5}{q['exch_s']:<7}{q['rst_r']:<5}"
-                f"{q['exch_r']:<10} {q['name']}")
+                f"{q['exch_r']:<10}{pts:<6}{q['name']}")
 
         call = self.val["call"]
         info = self.qrz.info(call) if is_call(call) else None
@@ -677,6 +803,9 @@ class App:
         if dupe:
             put(h - 6, 1, " " + self.dupe_text(dupe) + " ",
                 self.warn_attr | curses.A_BOLD)
+        elif self.new_mult():
+            put(h - 6, 1, f" NEW MULTIPLIER: {self.new_mult()} ",
+                self.good_attr | curses.A_BOLD)
 
         x, cursor = 1, (h - 4, 1)
         for i, name in enumerate(FIELDS):
@@ -706,11 +835,13 @@ class App:
     def run(self, scr):
         if hasattr(curses, "set_escdelay"):
             curses.set_escdelay(25)
-        self.warn_attr = curses.A_REVERSE
+        self.warn_attr = self.good_attr = curses.A_REVERSE
         if curses.has_colors():
             curses.start_color()
             curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_RED)
             self.warn_attr = curses.color_pair(1)
+            curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_GREEN)
+            self.good_attr = curses.color_pair(2)
         curses.curs_set(1)
         scr.keypad(True)
         scr.timeout(200)
@@ -739,6 +870,8 @@ def main():
     ap.add_argument("--config-dir", default=DEFAULT_CONFIG_DIR)
     ap.add_argument("--export-adif", metavar="FILE")
     ap.add_argument("--export-cabrillo", metavar="FILE")
+    ap.add_argument("--score", action="store_true",
+                    help="print the score and exit")
     args = ap.parse_args()
 
     if not args.contest:
@@ -752,9 +885,11 @@ def main():
     if not args.logfile:
         stem = os.path.splitext(os.path.basename(args.contest))[0].lower()
         args.logfile = stem + ".db"
-    dupe_rules(cfg)                      # fail early on a bad setting
+    dupes, scoring = dupe_rules(cfg), score_rules(cfg)   # fail early
     log = Log(args.logfile)
-    if args.export_adif or args.export_cabrillo:
+    if args.score:
+        print(score_report(compute_score(log.rows(), dupes, scoring), scoring))
+    if args.score or args.export_adif or args.export_cabrillo:
         if args.export_adif:
             print("ADIF:", log.export_adif(args.export_adif))
         if args.export_cabrillo:
@@ -762,6 +897,8 @@ def main():
         return
     curses.wrapper(App(cfg, log).run)
     print(f"{log.count()} QSOs in {args.logfile}")
+    if scoring["configured"]:
+        print(score_report(compute_score(log.rows(), dupes, scoring), scoring))
 
 
 if __name__ == "__main__":

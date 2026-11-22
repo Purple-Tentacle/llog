@@ -8,7 +8,7 @@ One Python file, standard library only, nothing to compile.
 - Typing a frequency in the logger tunes the radio
 - SQLite log file, ADIF and Cabrillo export
 
-Dupe checking is configurable per contest. Scoring is not implemented yet.
+Dupe checking and scoring are configurable per contest.
 
 ## Requirements
 
@@ -43,7 +43,7 @@ Station data and contest data live in separate files under `~/.config/llog/`:
 | File | Content |
 | --- | --- |
 | `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port |
-| `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, dupe rules |
+| `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, dupe rules, scoring |
 
 Both are created by a few questions the first time they are needed: the
 station file on the very first start, a contest file the first time you start
@@ -97,6 +97,36 @@ dupe_ignore_suffix = no
 dupe_exchange = no
 dupe_minutes = 0
 ```
+
+## Scoring
+
+Scoring is set in the contest file as well:
+
+| Option | Example | Meaning |
+| --- | --- | --- |
+| `points` | `FM:2, SSB:4, CW:6` | QSO points per mode. Keys are a mode (`CW`, `SSB`, `FM`, `AM`, `RTTY`), a mode class (`PH`, `DIG`) or `*` for everything else. Modes without an entry score 0. Empty = 1 point per QSO. |
+| `multipliers` | `N[0-9][0-9], WN, DVN` | Received exchanges that count as a multiplier. Entries are exact values or patterns (`?` one character, `*` any text, `[0-9]` one digit). `*` alone makes every different exchange a multiplier. Empty = no multipliers. |
+| `mult_per` | `band` (default) or `contest` | Whether a multiplier counts once per band or once in the whole contest |
+
+The score is the sum of QSO points times the number of multipliers, or just
+the points when no multipliers are configured. Dupes (according to the dupe
+rules) get no points and no multiplier.
+
+With scoring configured, llog shows the score in the header, the points of
+each QSO in the list (`+M` marks a new multiplier), a green `NEW MULTIPLIER`
+line while you type an exchange that is new on the band, and writes
+`CLAIMED-SCORE` into the Cabrillo file. `python3 llog.py wsa wsa.db --score`
+prints the score per band.
+
+Ready-made contest files for WNA and WSA are in `examples/`. Copy them to
+`~/.config/llog/contests/` and enter your DOK:
+
+```
+mkdir -p ~/.config/llog/contests
+cp examples/wna.ini examples/wsa.ini ~/.config/llog/contests/
+```
+
+The score is your claimed score; the organiser's evaluation is what counts.
 
 ## Keys
 

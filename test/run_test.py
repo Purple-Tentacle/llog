@@ -43,11 +43,11 @@ password =
 host = 127.0.0.1
 port = {port}
 """)
-open(os.path.join(work, "contests", "wsa.ini"), "w").write("""[contest]
-contest = WSA
-exchange_sent = N99
-specific = N99
-""")
+EX = os.path.join(os.path.dirname(HERE), "examples")
+open(os.path.join(work, "contests", "wsa.ini"), "w").write(
+    open(os.path.join(EX, "wsa.ini")).read()
+    .replace("exchange_sent =", "exchange_sent = N99")
+    .replace("specific =", "specific = N99"))
 
 pid, fd = pty.fork()
 if pid == 0:
@@ -118,4 +118,34 @@ assert not d(R(), call="DL1AB")                              # no substring matc
 assert d(R(exchange=True)) and d(R(exchange=True), exch="N01")
 assert not d(R(exchange=True), exch="N02")                   # moved: new exchange
 assert d(R(minutes=30)) and not d(R(minutes=15))             # 20 minutes ago
+# scoring with the shipped example files
+import configparser
+def rules_for(name):
+    c = configparser.ConfigParser(); c.read(os.path.join(EX, name))
+    return m.dupe_rules(c), m.score_rules(c)
+def rows(*qsos):
+    return [dict(id=i, ts=f"2026-12-01 18:{i:02d}:00", call=c, freq_hz=f, mode=mo,
+                 exch_r=e) for i, (c, f, mo, e) in enumerate(qsos, 1)]
+V, U = 144300000, 432200000
+dr, sr = rules_for("wna.ini")
+r = m.compute_score(rows(("DL1A", V, "FM", "N01"),    # 2, mult N01 on 2m
+                         ("DL1B", V, "SSB", "N01"),   # 4, same mult
+                         ("DL1A", U, "CW", "N01"),    # 6, mult N01 on 70cm
+                         ("DL1C", V, "FM", "NM"),     # 2, NM is no multiplier
+                         ("DL1A", V, "FM", "N01"),    # dupe
+                         ("DL1D", V, "FM", "WN"),     # 2, special DOK
+                         ("DL1E", V, "FM", "O05")),   # 2, other district
+                    dr, sr)
+assert (r["points"], r["mults"], r["score"]) == (18, 3, 54), r
+assert r["per_qso"][5] == (0, True, False) and r["bands"]["2m"]["dupes"] == 1
+dr, sr = rules_for("wsa.ini")
+r = m.compute_score(rows(("DL1A", V, "CW", "O05"), ("DL1B", V, "FM", "NOTO"),
+                         ("DL1C", V, "SSB", "N01"), ("DL1D", V, "FM", "O07"),
+                         ("DL1E", U, "FM", "O05"), ("DL1F", V, "FM", "NM")),
+                    dr, sr)
+assert (r["points"], r["mults"], r["score"]) == (18, 3, 54), r
+assert "CLAIMED-SCORE: 10" in open(os.path.join(work, "DA2IT-" +
+    datetime.now(timezone.utc).strftime("%Y-%m-%d") + "-1.cbr")).read()
+import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
+assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
 print("ALL OK")
