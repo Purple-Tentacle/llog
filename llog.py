@@ -14,6 +14,7 @@ import fnmatch
 import getpass
 import os
 import queue
+import re
 import socket
 import sqlite3
 import sys
@@ -368,6 +369,71 @@ class Rig(threading.Thread):
                 time.sleep(2)
 
 
+# ----------------------------------------------------------------- cluster
+SPOT_RE = re.compile(r"^DX de\s+([A-Z0-9/#-]+):\s*(\d+(?:\.\d+)?)\s+"
+                     r"([A-Z0-9/]+)\s*(.*?)\s*(\d{4})Z", re.I)
+
+
+class Cluster(threading.Thread):
+    """Reads spots from a DX cluster node (telnet) and keeps the recent ones."""
+
+    def __init__(self, host, port, call, minutes=30):
+        super().__init__(daemon=True)
+        self.host, self.port, self.call = host, port, call
+        self.max_age = minutes * 60
+        self.status = "connecting" if host else "off"
+        self._spots = {}      # (dx call, band) -> spot, newest wins
+        self._lock = threading.Lock()
+
+    def feed(self, line):
+        match = SPOT_RE.match(line.strip())
+        if not match:
+            return
+        spotter, khz, call, comment, hhmm = match.groups()
+        hz = round(float(khz) * 1000)
+        spot = {"call": call.upper(), "freq_hz": hz, "band": band_of(hz),
+                "spotter": spotter.rstrip("-#:"), "comment": comment,
+                "time": hhmm, "seen": time.time()}
+        with self._lock:
+            self._spots[(spot["call"], spot["band"])] = spot
+
+    def spots(self, band):
+        """Recent spots on one band, newest first."""
+        limit = time.time() - self.max_age
+        with self._lock:
+            for key in [k for k, v in self._spots.items() if v["seen"] < limit]:
+                del self._spots[key]
+            found = [v for v in self._spots.values() if v["band"] == band]
+        return sorted(found, key=lambda v: v["seen"], reverse=True)
+
+    def run(self):
+        while self.host:
+            try:
+                self.status = "connecting"
+                with socket.create_connection((self.host, self.port),
+                                              timeout=10) as sock:
+                    sock.settimeout(3)
+                    logged_in, buf = False, b""
+                    while True:
+                        try:
+                            data = sock.recv(4096)
+                            if not data:
+                                raise ConnectionError("connection closed")
+                        except socket.timeout:
+                            data = b""
+                        if not logged_in:       # answer the login prompt once
+                            sock.sendall((self.call + "\r\n").encode())
+                            sock.settimeout(120)
+                            logged_in, self.status = True, "connected"
+                        buf += re.sub(rb"\xff[\xfb-\xfe].", b"", data)
+                        *lines, buf = buf.split(b"\n")
+                        for line in lines:
+                            self.feed(line.decode("latin-1"))
+            except OSError as exc:
+                self.status = f"offline: {exc}"
+            time.sleep(30)
+
+
 # --------------------------------------------------------------------- qrz
 def parse_qrz(xml_text):
     """Returns (session dict, callsign dict) with namespace-free tags."""
@@ -620,6 +686,7 @@ def load_config(config_dir, contest):
                    "qrz": {"username": "", "password": ""},
                    "rig": {"host": "127.0.0.1", "port": "4532",
                            "vfo_switch": "retune", "tune_command": "auto"},
+                   "cluster": {"host": "", "port": "7300", "minutes": "30"},
                    "contest": {"contest": "", "exchange_sent": "",
                                "category_operator": "SINGLE-OP",
                                "email": "", "specific": "",
@@ -639,7 +706,10 @@ def load_config(config_dir, contest):
         cfg["qrz"]["username"] = ask("QRZ.com username (empty = no lookup)")
         if cfg["qrz"]["username"]:
             cfg["qrz"]["password"] = getpass.getpass("QRZ.com password: ")
-        write_ini(station_file, cfg, ("station", "qrz", "rig"))
+        cfg["cluster"]["host"] = ask("DX cluster host (empty = no cluster)")
+        if cfg["cluster"]["host"]:
+            cfg["cluster"]["port"] = ask("DX cluster port", "7300")
+        write_ini(station_file, cfg, ("station", "qrz", "rig", "cluster"))
 
     contest_file = contest_path(config_dir, contest)
     if os.path.exists(contest_file):
@@ -721,6 +791,9 @@ class App:
                        retune=rig_retune(cfg))
         self.qrz = Qrz(os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
                        os.environ.get("QRZ_PASSWORD", cfg["qrz"]["password"]))
+        self.cluster = Cluster(cfg["cluster"]["host"].strip(),
+                               cfg["cluster"].getint("port"), self.mycall,
+                               cfg["cluster"].getint("minutes"))
         # one entry row per VFO
         self.entry = {v: {"val": dict.fromkeys(FIELDS, ""), "focus": 0,
                           "dupe_ok": ""} for v in "AB"}
@@ -1063,6 +1136,17 @@ class App:
         rows.append(row)
         return rows
 
+    def cluster_rows(self):
+        """(text, worked) lines for the cluster panel on the current band."""
+        band = band_of(self.freq() or 0)
+        rows = []
+        for spot in self.cluster.spots(band):
+            worked = self.log.find_dupe(self.rules, spot["call"],
+                                        spot["freq_hz"], self.mode())
+            rows.append((f"{spot['freq_hz'] / 1000:>9.1f} {spot['call']:<12} "
+                         f"{spot['time']}", bool(worked)))
+        return rows
+
     def score_text(self):
         if not self.scoring["configured"]:
             return ""
@@ -1105,6 +1189,18 @@ class App:
                 put(h - 9 - len(mult_rows) + n, x, text,
                     self.good_attr if worked else 0)
                 x += len(text) + 1
+        # DX cluster panel to the right of the QSO list
+        panel_x = w - 30 if self.cluster.host and w >= 126 else None
+        if panel_x:
+            put(2, panel_x, f"DX cluster {band_of(self.freq() or 0) or '?'}",
+                curses.A_BOLD)
+            spots = self.cluster_rows()
+            if self.cluster.status != "connected":
+                spots = [(self.cluster.status, False)] + spots
+            elif not spots:
+                spots = [("no spots on this band yet", False)]
+            for i, (text, worked) in enumerate(spots[:space]):
+                put(3 + i, panel_x, text[:28], curses.A_DIM if worked else 0)
         per_qso = self.score()["per_qso"]
         rows = self.log.rows()
         end = len(rows)
@@ -1129,7 +1225,8 @@ class App:
                         cursor = (3 + i, x + min(len(texts[name]), width - 1))
                 put(3 + i, x, texts[name][:width].ljust(width), attr)
                 x += width + 1
-            put(3 + i, x, f"{pts:<6}{q['name']}")
+            tail = f"{pts:<6}{q['name']}"
+            put(3 + i, x, tail[:panel_x - x - 2] if panel_x else tail)
 
         # hints for the active entry row (or the edited QSO)
         call = self.eval["call"] if self.edit else self.val["call"]
@@ -1207,6 +1304,7 @@ class App:
         scr.keypad(True)
         scr.timeout(200)
         self.rig.start()
+        self.cluster.start()
         while True:
             if self.rig.online and self.rig.vfo != self.row:
                 self.row = self.rig.vfo      # A/B was pressed on the radio

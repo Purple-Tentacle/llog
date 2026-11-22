@@ -7,6 +7,7 @@ One Python file, standard library only, nothing to compile.
 - Live frequency and mode from the radio through Hamlib's `rigctld`
 - Typing a frequency in the logger tunes the radio
 - Two entry rows with their own frequency and mode
+- DX cluster panel with the spots on the current band
 - SQLite log file, ADIF and Cabrillo export
 
 Dupe checking and scoring are configurable per contest.
@@ -71,13 +72,34 @@ first. The command is chosen by `tune_command` in the `[rig]` section:
 | `auto` (default) | KX2: `w SWT20;`, KX3: `w SWT44;` (the radio's ATU button), any other radio: `G TUNE` (Hamlib's generic tune operation) |
 | anything else | sent to rigctld as written, e.g. `w SWT20;` |
 
+## DX cluster
+
+With a cluster node configured, a panel to the right of the QSO list shows
+the spots on the band of the current entry row, newest first: frequency,
+callsign and spot time (UTC). It follows the band when you QSY or switch
+rows. Stations you have already worked on that band (by the contest's dupe
+rules) are shown dimmed.
+
+Add the node to `config.ini`:
+
+```
+[cluster]
+host = <hostname of a DX cluster node>
+port = 7300
+minutes = 30
+```
+
+llog connects by telnet, logs in with your callsign and keeps each spot for
+`minutes`. The panel needs a terminal at least 126 columns wide; on narrower
+terminals it is hidden. Leave `host` empty to switch the cluster off.
+
 ## Configuration
 
 Station data and contest data live in separate files under `~/.config/llog/`:
 
 | File | Content |
 | --- | --- |
-| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port, `vfo_switch`, `tune_command` |
+| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port, `vfo_switch`, `tune_command`, DX cluster node |
 | `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, dupe rules, scoring |
 
 Both are created by a few questions the first time they are needed: the

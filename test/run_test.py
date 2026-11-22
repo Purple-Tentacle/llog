@@ -47,6 +47,20 @@ server = socket.socket(); server.bind(("127.0.0.1", 0)); server.listen()
 port = server.getsockname()[1]
 threading.Thread(target=fake_rigctld, args=(server,), daemon=True).start()
 
+def fake_cluster(srv):             # DX cluster node: login prompt, then spots
+    conn, _ = srv.accept()
+    conn.sendall(b"\xff\xfb\x01login: ")
+    state["cluster_login"] = conn.recv(100)
+    conn.sendall(b"Hello\r\n"
+                 b"DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z\r\n"
+                 b"DX de DL2BBB-#:    7030.5  DK9ZZ        cq                             2154Z\r\n"
+                 b"DX de DL3CCC:     14060.0  DL1ABC/P     wsa                            2155Z JO31\r\n")
+    time.sleep(60)
+
+
+csrv = socket.socket(); csrv.bind(("127.0.0.1", 0)); csrv.listen()
+threading.Thread(target=fake_cluster, args=(csrv,), daemon=True).start()
+
 work = os.path.join(HERE, "work"); os.makedirs(work, exist_ok=True)
 db = os.path.join(work, "t.db")
 import shutil; shutil.rmtree(work); os.makedirs(work)
@@ -60,6 +74,9 @@ password =
 [rig]
 host = 127.0.0.1
 port = {port}
+[cluster]
+host = 127.0.0.1
+port = {csrv.getsockname()[1]}
 """)
 EX = os.path.join(os.path.dirname(HERE), "examples")
 open(os.path.join(work, "contests", "wsa.ini"), "w").write(
@@ -69,7 +86,7 @@ open(os.path.join(work, "contests", "wsa.ini"), "w").write(
 
 pid, fd = pty.fork()
 if pid == 0:
-    os.environ["TERM"] = "xterm"; os.environ["LINES"] = "30"; os.environ["COLUMNS"] = "120"
+    os.environ["TERM"] = "xterm"; os.environ["LINES"] = "30"; os.environ["COLUMNS"] = "140"
     os.execv(sys.executable, [sys.executable, APP, "wsa", db, "--config-dir", work])
 
 screen = b""
@@ -213,6 +230,15 @@ assert "CLAIMED-SCORE: 36" in open(os.path.join(work, "DA2IT-" +
 import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
 assert b"Mults" in txt and b"NOTO" in txt and b"O55" in txt
+assert b"DX cluster" in txt and b"K1ABC" in txt and state["cluster_login"] == b"DA2IT\r\n"
+cl = m.Cluster("", 0, "DA2IT")
+cl.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
+cl.feed("DX de DL2BBB-#:    7030.5  DK9ZZ        cq                             2154Z")
+cl.feed("DX de DL1AAA:     14027.3  K1ABC        QSY                            2156Z")
+cl.feed("To ALL de DL1AAA: hello"); cl.feed("DX de garbage")
+assert [(x["call"], x["freq_hz"], x["time"]) for x in cl.spots("20m")] == \
+    [("K1ABC", 14027300, "2156")] and len(cl.spots("40m")) == 1 and not cl.spots("2m")
+cl._spots[("K1ABC", "20m")]["seen"] -= 31 * 60; assert not cl.spots("20m")   # expired
 app = m.App.__new__(m.App)                      # panel logic without a terminal
 c = configparser.ConfigParser(); c.read(os.path.join(EX, "wna.ini"))
 app.scoring = m.score_rules(c); app.freq = lambda: V
