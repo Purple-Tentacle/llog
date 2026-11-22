@@ -31,28 +31,28 @@ threading.Thread(target=fake_rigctld, args=(server,), daemon=True).start()
 
 work = os.path.join(HERE, "work"); os.makedirs(work, exist_ok=True)
 db = os.path.join(work, "t.db")
-for f in os.listdir(work):
-    os.remove(os.path.join(work, f))
-cfg = os.path.join(work, "config.ini")
-open(cfg, "w").write(f"""[station]
+import shutil; shutil.rmtree(work); os.makedirs(work)
+os.makedirs(os.path.join(work, "contests"), exist_ok=True)
+open(os.path.join(work, "config.ini"), "w").write(f"""[station]
 call = DA2IT
-exchange_sent = N99
+email = test@example.org
 [qrz]
 username =
 password =
 [rig]
 host = 127.0.0.1
 port = {port}
-[contest]
+""")
+open(os.path.join(work, "contests", "wsa.ini"), "w").write("""[contest]
 contest = WSA
-email = test@example.org
+exchange_sent = N99
 specific = N99
 """)
 
 pid, fd = pty.fork()
 if pid == 0:
     os.environ["TERM"] = "xterm"; os.environ["LINES"] = "30"; os.environ["COLUMNS"] = "120"
-    os.execv(sys.executable, [sys.executable, APP, db, "--config", cfg])
+    os.execv(sys.executable, [sys.executable, APP, "wsa", db, "--config-dir", work])
 
 screen = b""
 def pump(sec):

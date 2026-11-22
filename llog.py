@@ -24,7 +24,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-DEFAULT_CONFIG = os.path.expanduser("~/.config/llog/config.ini")
+DEFAULT_CONFIG_DIR = os.path.expanduser("~/.config/llog")
 AGENT = "llog-0.2"
 
 BANDS = [  # (low Hz, high Hz, ADIF band, Cabrillo frequency or None = kHz)
@@ -353,33 +353,77 @@ class Log:
 
 
 # ------------------------------------------------------------------ config
-def load_config(path):
-    cfg = configparser.ConfigParser()
-    cfg.read_dict({"station": {"call": "", "exchange_sent": ""},
-                   "qrz": {"username": "", "password": ""},
-                   "rig": {"host": "127.0.0.1", "port": "4532"},
-                   "contest": {"contest": "", "category_operator": "SINGLE-OP",
-                                "email": "", "specific": ""}})
-    if os.path.exists(path):
-        cfg.read(path)
-        return cfg
-    print(f"No config yet - creating {path}\n")
-    cfg["station"]["call"] = input("Your callsign: ").strip().upper()
-    cfg["station"]["exchange_sent"] = input(
-        "Exchange you send (e.g. your DOK, '#' = serial number, empty = none): "
-    ).strip().upper()
-    cfg["qrz"]["username"] = input("QRZ.com username (empty = no lookup): ").strip()
-    if cfg["qrz"]["username"]:
-        cfg["qrz"]["password"] = getpass.getpass("QRZ.com password: ")
-    cfg["contest"]["contest"] = input("Contest name for the log header (e.g. WSA or WNA): ").strip()
-    cfg["contest"]["email"] = input("E-mail for the log header: ").strip()
-    if cfg["station"]["exchange_sent"] not in ("", "#"):
-        cfg["contest"]["specific"] = cfg["station"]["exchange_sent"]
+def ask(prompt, default=""):
+    answer = input(f"{prompt} [{default}]: " if default else f"{prompt}: ").strip()
+    return "" if answer == "-" else (answer or default)
+
+
+def write_ini(path, cfg, sections):
+    out_cfg = configparser.ConfigParser()
+    for name in sections:
+        out_cfg[name] = dict(cfg[name])
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as out:
-        cfg.write(out)
-    print(f"Saved. Edit {path} to change these values.\n")
+        out_cfg.write(out)
+    print(f"Saved {path}\n")
+
+
+def contest_path(config_dir, contest):
+    if contest.endswith(".ini") or os.sep in contest:
+        return contest
+    return os.path.join(config_dir, "contests", contest.lower() + ".ini")
+
+
+def list_contests(config_dir):
+    folder = os.path.join(config_dir, "contests")
+    if not os.path.isdir(folder):
+        return []
+    return sorted(f[:-4] for f in os.listdir(folder) if f.endswith(".ini"))
+
+
+def load_config(config_dir, contest):
+    """Station data from config.ini, contest data from contests/<name>.ini."""
+    cfg = configparser.ConfigParser()
+    cfg.read_dict({"station": {"call": "", "email": ""},
+                   "qrz": {"username": "", "password": ""},
+                   "rig": {"host": "127.0.0.1", "port": "4532"},
+                   "contest": {"contest": "", "exchange_sent": "",
+                               "category_operator": "SINGLE-OP",
+                               "email": "", "specific": ""}})
+    station_file = os.path.join(config_dir, "config.ini")
+    if os.path.exists(station_file):
+        cfg.read(station_file)
+    else:
+        print(f"No station config yet - creating {station_file}\n")
+        cfg["station"]["call"] = ask("Your callsign").upper()
+        cfg["station"]["email"] = ask("E-mail for log headers")
+        cfg["qrz"]["username"] = ask("QRZ.com username (empty = no lookup)")
+        if cfg["qrz"]["username"]:
+            cfg["qrz"]["password"] = getpass.getpass("QRZ.com password: ")
+        write_ini(station_file, cfg, ("station", "qrz", "rig"))
+
+    contest_file = contest_path(config_dir, contest)
+    if os.path.exists(contest_file):
+        cfg.read(contest_file)
+    else:
+        con = cfg["contest"]
+        print(f"New contest - creating {contest_file}\n")
+        name = os.path.splitext(os.path.basename(contest))[0].upper()
+        con["contest"] = ask("Contest name for the log header", name)
+        con["exchange_sent"] = ask(
+            "Exchange you send (e.g. your DOK, '#' = serial number, '-' = none)",
+            con["exchange_sent"] or cfg["station"].get("exchange_sent", "")
+        ).upper()
+        con["category_operator"] = ask("Operator category",
+                                       con["category_operator"])
+        con["specific"] = ask(
+            "SPECIFIC header (own DOK for DARC contests, '-' = none)",
+            con["exchange_sent"] if con["exchange_sent"] != "#" else ""
+        ).upper()
+        write_ini(contest_file, cfg, ("contest",))
+    if not cfg["contest"]["email"]:
+        cfg["contest"]["email"] = cfg["station"].get("email", "")
     return cfg
 
 
@@ -415,7 +459,7 @@ class App:
         return "59" if self.mode() in ("SSB", "FM", "AM") else "599"
 
     def exch_sent(self):
-        sent = self.cfg["station"]["exchange_sent"]
+        sent = self.cfg["contest"]["exchange_sent"]
         return f"{self.log.count() + 1:03d}" if sent == "#" else sent
 
     def clear(self):
@@ -552,7 +596,7 @@ class App:
 
         rig = "RIG ok" if self.rig.online else "RIG offline (manual)"
         utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") + "Z"
-        head = (f" {self.mycall}  |  {fmt_freq(self.freq())} kHz  {self.mode()}  "
+        head = (f" {self.mycall}  {self.cfg['contest']['contest']}  |  {fmt_freq(self.freq())} kHz  {self.mode()}  "
                 f"{band_of(self.freq() or 0)}  |  {rig}  |  QSOs: "
                 f"{self.log.count()}  |  {utc} ")
         put(0, 0, head.ljust(w - 1), curses.A_REVERSE)
@@ -632,17 +676,28 @@ class App:
 
 def main():
     ap = argparse.ArgumentParser(description="Simple terminal contest logger")
-    ap.add_argument("logfile", nargs="?", default="llog.db",
-                    help="SQLite log file, one per contest (default: %(default)s)")
-    ap.add_argument("--config", default=DEFAULT_CONFIG)
+    ap.add_argument("contest", nargs="?",
+                    help="contest name (config in contests/<name>.ini) "
+                         "or path to a contest .ini file")
+    ap.add_argument("logfile", nargs="?",
+                    help="SQLite log file (default: <contest>.db)")
+    ap.add_argument("--config-dir", default=DEFAULT_CONFIG_DIR)
     ap.add_argument("--export-adif", metavar="FILE")
     ap.add_argument("--export-cabrillo", metavar="FILE")
     ap.add_argument("--export-stf", metavar="FILE")
     args = ap.parse_args()
 
-    cfg = load_config(args.config)
+    if not args.contest:
+        known = list_contests(args.config_dir)
+        ap.print_usage()
+        sys.exit("Configured contests: " + (", ".join(known) or "none yet")
+                 + "\nStart with: llog.py <contest>  (a new name creates it)")
+    cfg = load_config(args.config_dir, args.contest)
     if not cfg["station"]["call"]:
-        sys.exit(f"No callsign configured in {args.config}")
+        sys.exit(f"No callsign configured in {args.config_dir}/config.ini")
+    if not args.logfile:
+        stem = os.path.splitext(os.path.basename(args.contest))[0].lower()
+        args.logfile = stem + ".db"
     log = Log(args.logfile)
     if args.export_adif or args.export_cabrillo or args.export_stf:
         if args.export_stf:

@@ -17,6 +17,8 @@ Dupe checking and scoring are not implemented yet.
 
 ## Usage
 
+Start `rigctld` for your radio, then start llog with a contest name:
+
 ```
 # Icom IC-705 over USB (2 m / 70 cm, e.g. WNA and WSA)
 rigctl -l | grep 705                          # find the Hamlib model number
@@ -26,17 +28,30 @@ rigctld -m <model> -r /dev/ttyACM0 &
 rigctl -l | grep -i kx2
 rigctld -m <model> -r /dev/ttyUSB0 -s 38400 &
 
-python3 llog.py wsa-2026-12.db          # one log file per contest
+python3 llog.py wsa                 # log file wsa.db in the current directory
+python3 llog.py wsa wsa-2026-12.db  # explicit log file, e.g. one per month
+python3 llog.py                     # lists the configured contests
 ```
-
-The first start asks for your callsign, the exchange you send, your QRZ login
-and the log header data, and stores them in
-`~/.config/llog/config.ini` (mode 600). The QRZ password is stored there
-in plain text; the environment variables `QRZ_USERNAME` and `QRZ_PASSWORD`
-override the file.
 
 Without a running `rigctld` the logger still works; a typed frequency is then
 used for the log only.
+
+## Configuration
+
+Station data and contest data live in separate files under `~/.config/llog/`:
+
+| File | Content |
+| --- | --- |
+| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port |
+| `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header |
+
+Both are created by a few questions the first time they are needed: the
+station file on the very first start, a contest file the first time you start
+llog with a new contest name. Copy or edit the `.ini` files to change them.
+An `email` entry in a contest file overrides the station e-mail.
+
+The QRZ password is stored in `config.ini` in plain text (file mode 600); the
+environment variables `QRZ_USERNAME` and `QRZ_PASSWORD` override the file.
 
 ## Keys
 
@@ -57,7 +72,7 @@ used for the log only.
 Exports also work without the UI:
 
 ```
-python3 llog.py mylog.db --export-adif out.adi --export-cabrillo out.cbr --export-stf out.stf
+python3 llog.py wsa wsa-2026-12.db --export-adif out.adi --export-cabrillo out.cbr --export-stf out.stf
 ```
 
 ## STF export
@@ -69,7 +84,7 @@ Send a test log to the organiser before relying on it, or use Cabrillo.
 
 ## Exchange
 
-`exchange_sent` in the config is a fixed text (for example your DOK) or `#`
+`exchange_sent` in the contest file is a fixed text (for example your DOK) or `#`
 for a running serial number. The received exchange is a free-text field.
 
 ## Test
