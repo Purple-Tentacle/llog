@@ -867,25 +867,28 @@ class App:
         return True
 
     def mult_panel(self, width):
-        """Rows of (text, worked) for the multipliers named in the contest
-        file. Patterns such as N[0-9][0-9] are not listed."""
+        """Rows of (text, worked): every multiplier named in the contest file,
+        then worked ones that matched a pattern such as N[0-9][0-9]."""
+        if not self.scoring["mults"]:
+            return []
         names = [m for m in self.scoring["mults"]
                  if not any(c in m for c in "*?[")]
-        if not names:
-            return []
         per_band = self.scoring["mult_per"] == "band"
         band = band_of(self.freq() or 0) if per_band else ""
-        seen = self.score()["seen"]
-        done = sum((band, m) in seen for m in names)
+        worked = {value for b, value in self.score()["seen"] if b == band}
+        items = [(m, m in worked) for m in names]
+        items += [(m, True) for m in sorted(worked - set(names))]
+        if not items:
+            return []
         label = f"Mults {band or '?'}" if per_band else "Mults"
-        rows, row, used = [], [(f"{label} {done}/{len(names)}:", False)], 0
-        used = len(row[0][0]) + 1
-        for m in names:
-            if used + len(m) + 1 > width:
+        row = [(f"{label} ({len(worked)} worked):", False)]
+        rows, used = [], len(row[0][0]) + 1
+        for text, done in items:
+            if used + len(text) + 1 > width:
                 rows.append(row)
                 row, used = [], 0
-            row.append((m, (band, m) in seen))
-            used += len(m) + 1
+            row.append((text, done))
+            used += len(text) + 1
         rows.append(row)
         return rows
 

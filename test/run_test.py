@@ -168,6 +168,7 @@ app.scoring = m.score_rules(c); app.freq = lambda: V
 app.score = lambda: {"seen": {("2m", "WN"), ("70cm", "DVN"), ("2m", "N01")}}
 panel = app.mult_panel(30)
 flat = [item for row in panel for item in row]
-assert flat[0] == ("Mults 2m 1/8:", False), flat          # N[0-9][0-9] not listed
+assert flat[0] == ("Mults 2m (2 worked):", False), flat
 assert ("WN", True) in flat and ("DVN", False) in flat and len(panel) > 1
+assert flat[-1] == ("N01", True) and len(flat) == 10      # 8 named + worked N01
 print("ALL OK")
