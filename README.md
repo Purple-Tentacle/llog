@@ -182,7 +182,10 @@ keep = 50
 folder =
 ```
 
-`minutes = 0` switches the backup off. `folder` can point somewhere else, for
+"Backup now" in the menu (Alt-M, then B) writes such a copy immediately,
+with the same name pattern and in the same folder.
+
+`minutes = 0` switches the periodic backup off. `folder` can point somewhere else, for
 example a USB stick. A backup is a complete log file: to go back to one, copy
 it to the place of the log file, or start llog with it directly
 (`python3 llog.py wsa backups/wsa-20261201-190500.db`).
@@ -369,7 +372,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | Esc | Clear the entry line |
 | `<frequency>` Enter | QSY (`7030.5` = kHz, below 1000 = MHz, e.g. `144.3`) |
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
-| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), ATU tune, quit |
+| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, ATU tune, quit |
 | `\` | Switch to the other entry row (A/B) |
 | PgDn / PgUp | Highlight a station in the panel; Enter in an empty call field takes it |
 | F7 | Switch the panel between newest first and band map |
@@ -384,7 +387,8 @@ The score is your claimed score; the organiser's evaluation is what counts.
 
 Alt-M opens a small menu in the middle of the screen. Up and Down move, Enter
 selects, Esc closes it; the letter in front of an entry selects it directly
-(`A` for ADIF, `C` for Cabrillo, `T` for ATU tune, `Q` to quit). The exports are written
+(`A` for ADIF, `C` for Cabrillo, `B` for a backup, `T` for ATU tune, `Q` to
+quit). The exports are written
 next to the log file and the message line shows the file name.
 
 ### Editing a QSO

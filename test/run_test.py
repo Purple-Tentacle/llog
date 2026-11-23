@@ -143,6 +143,7 @@ assert b"you are not registered" in screen and b"dxspider >" not in screen
 send("dl8zz\n"); send("dl8yy"); send("\x1b[20~")               # Ctrl-J and F9: store for later
 send("\x1b[18~")                                              # F7: band map
 send("\x1bm"); send("t", 1.5)                                  # Alt-M, T: ATU tune
+send("\x1bm"); send("b")                                       # Alt-M, B: backup now
 send("\x1bm"); send("\x1b")                                   # Alt-M, Esc: menu closed again
 send("\x1bm"); send("\r")                                     # Alt-M, Enter: ADIF
 send("\x1bm"); send("\x1bOB"); send("\r")                     # Alt-M, Down, Enter: Cabrillo                            # F2, F3 exports
@@ -363,6 +364,9 @@ app9.backup_at -= 301; assert app9.auto_backup() is None     # unchanged: no new
 for call in ("DL1BB", "DL1CC"):
     time.sleep(1.1); app9.val["call"] = call; app9.enter(); assert app9.auto_backup(force=True)
 assert len(os.listdir(bdir)) == 2 and os.path.basename(first) not in os.listdir(bdir)   # keep = 2
+time.sleep(1.1); before = set(os.listdir(bdir)); app9.menu = 0; app9.menu_key("b")
+assert app9.msg.startswith("Backup written: ") and len(os.listdir(bdir)) == 2
+assert set(os.listdir(bdir)) != before and app9.auto_backup(force=True) is None
 # running number in the sent exchange
 assert m.next_exchange("N99", ["N99"]) == "N99"
 assert m.next_exchange("#", []) == "001" and m.next_exchange("#", [], start=100) == "100"

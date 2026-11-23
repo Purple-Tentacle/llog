@@ -1558,8 +1558,20 @@ class App:
         self.backup_state = self.log.db.total_changes
         return target
 
+    def manual_backup(self):
+        """Menu: the same kind of copy as the periodic backup, right now."""
+        try:
+            target = self.log.backup(self.backup_folder, self.backup_keep)
+        except (OSError, sqlite3.Error) as exc:
+            self.msg = f"BACKUP FAILED: {exc}"
+            return
+        self.backup_at = time.time()
+        self.backup_state = self.log.db.total_changes
+        self.msg = f"Backup written: {target}"
+
     # ---- menu (Alt-M)
     MENU = (("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"),
+            ("b", "Backup now", "backup"),
             ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit"))
 
     def atu_tune(self):
@@ -1588,6 +1600,8 @@ class App:
                 return False
             if action == "atu":
                 self.atu_tune()
+            elif action == "backup":
+                self.manual_backup()
             else:
                 self.export(action)
         elif ch == "\x1b" or ch in ALT_M:
@@ -2052,7 +2066,7 @@ class App:
         put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
                       "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn panel | "
                       "F6 spot | F7 map | F9 store | F8 delete | "
-                      "Alt-M menu (export, ATU, quit) ".ljust(w - 1),
+                      "Alt-M menu (export, backup, ATU, quit) ".ljust(w - 1),
             curses.A_REVERSE)
         if self.menu is not None:        # menu box in the middle of the screen
             width = max(len(title) for _, title, _ in self.MENU) + 10
