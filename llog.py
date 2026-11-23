@@ -1295,12 +1295,16 @@ class App:
                  if not any(c in m for c in "*?[")]
         per_band = self.scoring["mult_per"] == "band"
         band = band_of(self.freq() or 0) if per_band else ""
-        worked = {value for b, value in self.score()["seen"] if b == band}
+        # without a frequency the band is unknown: show all bands together
+        any_band = per_band and not band
+        worked = {value for b, value in self.score()["seen"]
+                  if b == band or any_band}
         items = [(m, m in worked) for m in names]
         items += [(m, True) for m in sorted(worked - set(names))]
         if not items:
             return []
-        label = f"Mults {band or '?'}" if per_band else "Mults"
+        label = ("Mults all bands" if any_band else
+                 f"Mults {band}" if per_band else "Mults")
         row = [(f"{label} ({len(worked)} worked):", False)]
         rows, used = [], len(row[0][0]) + 1
         for text, done in items:

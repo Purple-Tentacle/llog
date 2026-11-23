@@ -323,4 +323,9 @@ flat = [item for row in panel for item in row]
 assert flat[0] == ("Mults 2m (2 worked):", False), flat
 assert ("WN", True) in flat and ("DVN", False) in flat and len(panel) > 1
 assert flat[-1] == ("N01", True) and len(flat) == 10      # 8 named + worked N01
+app.freq = lambda: 0                            # no rig, no frequency typed yet
+flat = [item for row in app.mult_panel(200) for item in row]
+assert flat[0] == ("Mults all bands (3 worked):", False), flat
+assert ("WN", True) in flat and ("DVN", True) in flat and ("N01", True) in flat
+app.freq = lambda: V
 print("ALL OK")
