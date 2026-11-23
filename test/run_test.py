@@ -324,6 +324,27 @@ c7 = m.load_config(work, "okp"); sr7 = m.score_rules(c7)
 assert c7["station"]["call"] == "OK/DA2IT" and sr7["home"]["prefix"] == "OK"
 assert m.qso_mults(sr7, "OK2BBB", "15", 14085000) == [("20m", "OK")]
 assert m.qso_points(sr7, "OK2BBB", "RTTY", 3585000) == 3 and m.qso_points(sr7, "K1ABC", "RTTY", 3585000) == 6
+# prefix and DOK multipliers (DARC CW-Ausbildungscontest)
+for call, want in (("DL1ABC", "DL1"), ("DA2IT", "DA2"), ("9A2AA", "9A2"), ("3DA0RU", "3DA0"),
+                   ("DL2025X", "DL2025"), ("DL1ABC/P", "DL1"), ("DL1ABC/7", "DL7"),
+                   ("EA8/DL1ABC", "EA8"), ("LX/DL1ABC", "LX0"), ("DL1ABC/QRP", "DL1")):
+    assert m.wpx_prefix(call) == want, (call, m.wpx_prefix(call))
+c8 = m.load_config(work, os.path.join(EX, "darc-cwa.ini")); dr8, sr8 = m.dupe_rules(c8), m.score_rules(c8)
+def cw(*qsos):
+    return [dict(id=i, ts=f"2026-12-08 18:{i:02d}:00", call=c, freq_hz=3530000, mode="CW",
+                 exch_r=e) for i, (c, e) in enumerate(qsos, 1)]
+r = m.compute_score(cw(("DL1ABC", "H24"),     # prefix DL1 + DOK H24
+                       ("DL1XYZ", "NM"),      # prefix known, NM is no multiplier
+                       ("OK1AAA", "001"),     # prefix OK1, serial number is none
+                       ("DK5ZZ", "H24"),      # prefix DK5, DOK known
+                       ("DF0WN", "WN"),       # prefix DF0 + special DOK WN
+                       ("DL1ABC", "H24")),    # dupe (every station once)
+                    dr8, sr8)
+assert (r["points"], r["mults"], r["score"]) == (5, 6, 30), r
+assert m.qso_mults(sr8, "DM6EE", "h33", 3530000) == [("", "H33"), ("", "pfx:DM6")]
+app8 = m.App(c8, m.Log(os.path.join(work, "cwa.db"))); app8.manual_freq["A"] = 3530000
+app8.val["call"] = "DM6EE"; app8.val["exch"] = "H33"; assert app8.new_mult() == "H33, DM6"
+app8.enter(); assert [t for row in app8.mult_panel(80) for t, _ in row][1:] == ["DM6", "H33"]
 # old style points still work, and no country file is needed for them
 assert m.qso_points(m.score_rules(m.load_config(work, "wsa")), "DL1A", "FM", 144300000) == 2
 # running number in the sent exchange

@@ -271,6 +271,8 @@ Scoring is set in the contest file as well:
 | --- | --- | --- |
 | `points` | `FM:2, SSB:4, CW:6` | QSO points, see below. Empty = 1 point per QSO. |
 | `multipliers` | `N[0-9][0-9], WN, DVN` | Received exchanges that count as a multiplier. If the exchange has several words (`001 N13`), each word is checked. Entries are exact values or patterns (`?` one character, `*` any text, `[0-9]` one digit). `*` alone makes every different exchange a multiplier. |
+| `mult_exclude` | `NM, #` | Received exchanges that never count as a multiplier, even if `multipliers` matches them. Same patterns; `#` stands for any plain number, such as a serial number. |
+| `mult_prefix` | `yes` | Every callsign prefix counts as a multiplier (`DL1`, `DK5`, `OK1`; the usual WPX definition, so `DL1ABC/7` is `DL7` and `EA8/DL1ABC` is `EA8`) |
 | `mult_country` | `yes` | Every DXCC country counts as a multiplier |
 | `mult_calls` | `OK` | Every station from the listed countries (by their main prefix) counts as a multiplier of its own. Ignored when you operate from one of these countries yourself. |
 | `mult_per` | `band` (default) or `contest` | Whether a multiplier counts once per band or once in the whole contest |
@@ -326,8 +328,8 @@ prefix (`EA8/DL1ABC` is Canary Islands); `/MM` has no country.
 | `mode` | `RTTY` | Log every QSO with this mode, whatever the radio reports (useful when the radio is in a generic data mode) |
 | `category_band`, `category_mode`, `category_power` | `ALL`, `RTTY`, `LOW` | Written as `CATEGORY-BAND` etc. into the Cabrillo header |
 
-Ready-made contest files are in `examples/`: `wna.ini`, `wsa.ini` and
-`ok-dx-rtty.ini`. Copy them to `~/.config/llog/contests/` and adjust the
+Ready-made contest files are in `examples/`: `wna.ini`, `wsa.ini`,
+`ok-dx-rtty.ini` and `darc-cwa.ini` (DARC CW-Ausbildungscontest). Copy them to `~/.config/llog/contests/` and adjust the
 marked lines:
 
 ```

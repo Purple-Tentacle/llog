@@ -249,6 +249,33 @@ def load_countries(cfg, needed=False):
     return None
 
 
+PORTABLE = {"P", "M", "MM", "AM", "QRP", "A", "B", "LH", "PM"}
+
+
+def wpx_prefix(call):
+    """Prefix as used for prefix multipliers (the WPX definition): the
+    start of the callsign up to its last digit. DL1ABC -> DL1,
+    DL2025X -> DL2025, DL1ABC/7 -> DL7, EA8/DL1ABC -> EA8, LX/DL1ABC -> LX0."""
+    def lead(text):
+        match = re.match(r"^(.*\d)[A-Z]*$", text)
+        return match.group(1) if match else text + "0"
+
+    parts = [p for p in call.upper().split("/") if p]
+    if not parts:
+        return ""
+    extra = [p for p in parts[1:] if p not in PORTABLE]
+    if not extra:
+        return lead(parts[0])
+    if extra[0].isdigit():                       # DL1ABC/7: call area changed
+        return re.sub(r"\d+$", "", lead(parts[0])) + extra[0]
+    return lead(min(parts[0], extra[0], key=len))  # the country designator
+
+
+def show_mult(value):
+    """Multiplier value for display (prefixes are stored as 'pfx:DL1')."""
+    return value.split(":", 1)[-1]
+
+
 BAND_NAMES = {name.upper() for _, _, name, _ in BANDS}
 RELATIONS = ("SAME", "DX", "OWN")     # same continent / other continent / own country
 
@@ -274,6 +301,11 @@ def score_rules(cfg):
     except ValueError:
         sys.exit("mult_country must be yes or no")
     mult_calls = con.get("mult_calls", "").upper().replace(",", " ").split()
+    try:
+        mult_prefix = con.getboolean("mult_prefix", False)
+    except ValueError:
+        sys.exit("mult_prefix must be yes or no")
+    exclude = con.get("mult_exclude", "").upper().replace(",", " ").split()
     by_country = (mult_country or bool(mult_calls)
                   or any(conds & set(RELATIONS) for conds, _ in points))
     countries = load_countries(cfg, needed=by_country)
@@ -283,11 +315,13 @@ def score_rules(cfg):
         # then no multipliers of their own (OK DX RTTY: "OK/OL stations:
         # DXCC countries on each band")
         mult_calls = []
-    return {"configured": bool(points or mults or mult_country or mult_calls),
+    return {"configured": bool(points or mults or mult_country or mult_calls
+                               or mult_prefix),
+            "mult_prefix": mult_prefix, "mult_exclude": exclude,
             "points": points or [(frozenset(), 1)],
             "mults": mults, "mult_per": per, "mult_country": mult_country,
             "mult_calls": mult_calls,
-            "has_mults": bool(mults or mult_country or mult_calls),
+            "has_mults": bool(mults or mult_country or mult_calls or mult_prefix),
             "countries": countries, "home": home}
 
 
@@ -312,8 +346,15 @@ def mult_key(rules, exch, freq_hz):
     whole exchange is tried first, then each word of it, so '001 N13' counts
     as the multiplier N13."""
     text = (exch or "").strip().upper()
+
+    def excluded(value):             # '#' in mult_exclude = any plain number
+        return any(value.isdigit() if pat == "#" else
+                   fnmatch.fnmatchcase(value, pat)
+                   for pat in rules.get("mult_exclude", ()))
+
     for value in [text] + text.split():
-        if value and any(fnmatch.fnmatchcase(value, pat) for pat in rules["mults"]):
+        if (value and not excluded(value) and
+                any(fnmatch.fnmatchcase(value, pat) for pat in rules["mults"])):
             band = band_of(freq_hz or 0) if rules["mult_per"] == "band" else ""
             return (band, value)
     return None
@@ -325,6 +366,8 @@ def qso_mults(rules, call, exch, freq_hz):
     is in one of the mult_calls countries."""
     band = band_of(freq_hz or 0) if rules["mult_per"] == "band" else ""
     keys = [mult_key(rules, exch, freq_hz)]
+    if rules.get("mult_prefix") and wpx_prefix(call):
+        keys.append((band, "pfx:" + wpx_prefix(call)))
     them = rules["countries"].lookup(call) if rules["countries"] else None
     if them and rules["mult_country"]:
         keys.append((band, them["prefix"]))
@@ -1060,6 +1103,7 @@ def load_config(config_dir, contest):
                                "mult_per": "band", "locator": "",
                                "serial_start": "1", "worked_before": "",
                                "mult_country": "no", "mult_calls": "",
+                               "mult_prefix": "no", "mult_exclude": "",
                                "mode": "", "category_band": "",
                                "category_mode": "", "category_power": ""}})
     station_file = os.path.join(config_dir, "config.ini")
@@ -1296,7 +1340,8 @@ class App:
             return None
         keys = qso_mults(self.scoring, self.val["call"], self.val["exch"],
                          self.freq())
-        new = [key[1] for key in keys if key not in self.score()["seen"]]
+        new = [show_mult(key[1]) for key in keys
+               if key not in self.score()["seen"]]
         return ", ".join(new) or None
 
     @staticmethod
@@ -1599,7 +1644,7 @@ class App:
         band = band_of(self.freq() or 0) if per_band else ""
         # without a frequency the band is unknown: show all bands together
         any_band = per_band and not band
-        worked = {value for b, value in self.score()["seen"]
+        worked = {show_mult(value) for b, value in self.score()["seen"]
                   if b == band or any_band}
         items = [(m, m in worked) for m in names]
         items += [(m, True) for m in sorted(worked - set(names))]
