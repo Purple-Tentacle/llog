@@ -985,6 +985,9 @@ COLUMNS = (("ts", 19, "UTC"), ("call", 13, "Call"), ("freq", 9, "kHz"),
            ("mode", 5, "Mode"), ("rst_s", 4, "Sent"), ("exch_s", 7, "Exch"),
            ("rst_r", 4, "Rcvd"), ("exch", 12, "Exch"), ("loc", 8, "Locator"))
 SPACE_OK = ("exch", "exch_s", "ts")      # cells that may contain a space
+# Alt-M: the main loop turns "Esc m" into this token; a few terminals send
+# an 8-bit character for it
+ALT_M = ("ALT-M", "\u00ed", "\u00cd", "\u00b5")
 ENTRY_X = 26                             # column where the entry fields start
 
 
@@ -1036,6 +1039,7 @@ class App:
         self.spot = ""        # callsign of the highlighted panel entry
         self.view = "newest"  # panel view: "newest" or "map" (band map)
         self.prompt = None    # question on the message line: text, value, action
+        self.menu = None      # index of the highlighted menu item, or None
         self.edit = None      # QSO being edited in the list, or None
         self.eval = {}        # its cell texts while editing
         self.efocus = 1       # edited cell (index into COLUMNS)
@@ -1313,6 +1317,25 @@ class App:
                 self.eval[name] += ch.upper()
 
     # ---- keys
+    # ---- menu (Alt-M)
+    MENU = (("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"))
+
+    def menu_key(self, ch):
+        hotkeys = [key for key, _, _ in self.MENU]
+        if ch == curses.KEY_UP:
+            self.menu = (self.menu - 1) % len(self.MENU)
+        elif ch == curses.KEY_DOWN:
+            self.menu = (self.menu + 1) % len(self.MENU)
+        elif ch in ("\n", "\r", curses.KEY_ENTER) or (
+                isinstance(ch, str) and ch.lower() in hotkeys):
+            if isinstance(ch, str) and ch.lower() in hotkeys:
+                self.menu = hotkeys.index(ch.lower())
+            action = self.MENU[self.menu][2]
+            self.menu = None
+            self.export(action)
+        elif ch == "\x1b" or ch in ALT_M:
+            self.menu, self.msg = None, "Menu closed."
+
     def typed(self, name):
         """The user edited this field: automatic filling keeps its hands off."""
         entry = self.entry[self.row]
@@ -1355,12 +1378,13 @@ class App:
         if self.prompt:
             self.prompt_key(ch)
             return True
+        if self.menu is not None:
+            self.menu_key(ch)
+            return True
         if ch in (curses.KEY_F10, "\x18"):                       # F10, Ctrl-X
             return False
-        if ch == curses.KEY_F2:
-            self.export("adif")
-        elif ch == curses.KEY_F3:
-            self.export("cabrillo")
+        if ch in ALT_M:
+            self.menu, self.msg = 0, "Menu: Up/Down, Enter selects, Esc closes."
         elif ch == curses.KEY_F5:
             if self.rig.online:
                 self.msg = "ATU tune ..."
@@ -1770,9 +1794,20 @@ class App:
         else:
             put(h - 2, 1, self.msg)
         put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
-                      "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn panel | F5 ATU | F6 spot | F7 map | F9 store | F2 ADIF | "
-                      "F3 Cabrillo | F8 delete | F10 quit ".ljust(w - 1),
+                      "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn panel | "
+                      "F5 ATU | F6 spot | F7 map | F9 store | F8 delete | "
+                      "Alt-M menu | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
+        if self.menu is not None:        # menu box in the middle of the screen
+            width = max(len(title) for _, title, _ in self.MENU) + 10
+            top, left = max((h - len(self.MENU) - 2) // 2, 0), max((w - width) // 2, 0)
+            put(top, left, "+" + " Menu ".center(width - 2, "-") + "+")
+            for i, (hot, title, _) in enumerate(self.MENU):
+                put(top + 1 + i, left, "|" + " " * (width - 2) + "|")
+                put(top + 1 + i, left + 2, f"{hot.upper()}  {title}".ljust(width - 4),
+                    curses.A_REVERSE if i == self.menu else 0)
+            put(top + 1 + len(self.MENU), left, "+" + "-" * (width - 2) + "+")
+            cursor = (top + 1 + self.menu, left + 2)
         try:
             scr.move(*cursor)
         except curses.error:
@@ -1812,8 +1847,18 @@ class App:
                 return
             if ch == curses.KEY_RESIZE:
                 continue
-            if not self.key(scr, ch):
-                return
+            keys = [ch]
+            if ch == "\x1b":             # Alt-M arrives as Esc directly followed by m
+                scr.timeout(30)
+                try:
+                    follow = scr.get_wch()
+                    keys = ["ALT-M"] if follow in ("m", "M") else [ch, follow]
+                except curses.error:
+                    pass                 # a plain Esc
+                scr.timeout(200)
+            for one in keys:
+                if not self.key(scr, one):
+                    return
 
 
 def main():

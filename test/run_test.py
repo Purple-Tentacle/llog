@@ -143,7 +143,9 @@ assert b"you are not registered" in screen and b"dxspider >" not in screen
 send("dl8zz\n"); send("dl8yy"); send("\x1b[20~")               # Ctrl-J and F9: store for later
 send("\x1b[18~")                                              # F7: band map
 send("\x1b[15~", 1.5)                                         # F5: ATU tune
-send("\x1bOQ"); send("\x1bOR")                            # F2, F3 exports
+send("\x1bm"); send("\x1b")                                   # Alt-M, Esc: menu closed again
+send("\x1bm"); send("\r")                                     # Alt-M, Enter: ADIF
+send("\x1bm"); send("\x1bOB"); send("\r")                     # Alt-M, Down, Enter: Cabrillo                            # F2, F3 exports
 send("\x1b[21~", 1.0)                                         # F10 quit
 os.waitpid(pid, 0)
 
