@@ -203,6 +203,11 @@ app3 = m.App(m.load_config(work, "wsa"), m.Log(os.path.join(work, "c.db")))
 app3.manual_freq["A"] = 14060000
 app3.cluster.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
 assert app3.cluster_rows()[0]["text"] == "14025.0 K1ABC        2153 CQ TEST"   # no indent
+# a multiplier inside a longer exchange ("001 N13")
+mr = {"mults": ["N[0-9][0-9]", "DVN"], "mult_per": "band"}
+F2M = 144300000
+assert m.mult_key(mr, "001 N13", F2M) == ("2m", "N13") and m.mult_key(mr, "n13", F2M) == ("2m", "N13")
+assert m.mult_key(mr, "dvn 5", F2M) == ("2m", "DVN") and m.mult_key(mr, "001 NM", F2M) is None
 # running number in the sent exchange
 assert m.next_exchange("N99", ["N99"]) == "N99"
 assert m.next_exchange("#", []) == "001" and m.next_exchange("#", [], start=100) == "100"

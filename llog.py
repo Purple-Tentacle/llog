@@ -188,11 +188,14 @@ def qso_points(rules, mode):
 
 
 def mult_key(rules, exch, freq_hz):
-    """Multiplier this exchange earns as (band, value), or None."""
-    value = (exch or "").strip().upper()
-    if value and any(fnmatch.fnmatchcase(value, pat) for pat in rules["mults"]):
-        band = band_of(freq_hz or 0) if rules["mult_per"] == "band" else ""
-        return (band, value)
+    """Multiplier this exchange earns as (band, value), or None. The whole
+    exchange is tried first, then each word of it, so '001 N13' counts as
+    the multiplier N13."""
+    text = (exch or "").strip().upper()
+    for value in [text] + text.split():
+        if value and any(fnmatch.fnmatchcase(value, pat) for pat in rules["mults"]):
+            band = band_of(freq_hz or 0) if rules["mult_per"] == "band" else ""
+            return (band, value)
     return None
 
 
