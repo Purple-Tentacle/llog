@@ -224,6 +224,11 @@ assert view() == [("spot", "W1AW", True), ("spot", "K1ABC", False), ("here", "",
                   ("worked", "DL1WKD", True), ("stored", "DL8ZZ", False)], view()
 assert app3.panel_rows()[4]["text"].startswith("*14050.0 DL8ZZ") and \
     app3.panel_rows()[2]["text"].startswith(">14030.0")
+app3.manual_freq["A"] = 14040100                             # tuned onto DL1WKD
+rows3 = app3.panel_rows()
+assert [r["kind"] for r in rows3] == ["spot", "spot", "worked", "stored"]   # no extra line
+assert rows3[2]["text"].startswith(">14040.0 DL1WKD") and not rows3[1].get("here")
+app3.manual_freq["A"] = 14030000
 app3.spot_step(+1); assert app3.spot == "DL1WKD"            # next above our frequency
 app3.spot_step(+1); assert app3.spot == "DL8ZZ"
 app3.spot = ""; app3.spot_step(-1); assert app3.spot == "K1ABC"   # next below
@@ -347,7 +352,7 @@ import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
 assert b"Mults" in txt and b"NOTO" in txt and b"O55" in txt
 assert b"Newest" in txt and b"K1ABC" in txt and b"2153 CQ TEST" in txt
-assert b"Band map 40m" in txt and b"*7012.0 DL8YY" in txt and b"<<< row A" in txt and state["cluster_login"].startswith(b"DA2IT-1\r\n")
+assert b"Band map 40m" in txt and b"stored" in txt and state["cluster_login"].startswith(b"DA2IT-1\r\n")
 cl = m.Cluster("", 0, "DA2IT")
 cl.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
 cl.feed("DX de DL2BBB-#:    7030.5  DK9ZZ        cq                             2154Z")

@@ -85,8 +85,10 @@ between two views:
   as the width allows (a full comment needs a terminal about 170 columns
   wide).
 - **Band map:** the same entries sorted by frequency, plus every station in
-  your log on that band at the frequency you worked it, and a `>` line that
-  marks where the current row is tuned.
+  your log on that band at the frequency you worked it. A `>` marks where
+  the current row is tuned: in front of the stations on that frequency
+  (within 200 Hz), or on a line of its own between its neighbours when no
+  station is there.
 
 Stations you have already worked on that band (by the contest's dupe rules)
 are shown dimmed; stored stations are marked with `*`.

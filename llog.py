@@ -1466,17 +1466,23 @@ class App:
                 self.rules, row["call"], row["freq_hz"], self.mode()))
         if self.view == "map":
             rows.sort(key=lambda r: (r["freq_hz"], r["call"]))
-            if here:
+            # mark our position: on the stations we are tuned to (within
+            # 200 Hz), or else on a line of its own between its neighbours
+            on = [r for r in rows if abs(r["freq_hz"] - here) <= 200]
+            for row in on:
+                row["here"] = True
+            if here and not on:
                 at = sum(r["freq_hz"] < here for r in rows)
                 rows.insert(at, {"kind": "here", "call": "", "freq_hz": here,
                                  "time": "", "comment": f"<<< row {self.row}",
-                                 "worked": False})
+                                 "worked": False, "here": True})
         else:
             rows.sort(key=lambda r: r["seen"], reverse=True)
         # frequencies right-aligned among themselves, flush with the header
         width = max((len(f"{r['freq_hz'] / 1000:.1f}") for r in rows), default=0)
         for row in rows:
-            flag = {"stored": "*", "here": ">"}.get(row["kind"], " ")
+            flag = ">" if row.get("here") else "*" if row["kind"] == "stored" \
+                else " "
             row["text"] = (f"{flag}{row['freq_hz'] / 1000:>{width}.1f} "
                            f"{row['call']:<12} {row['time']:<4} "
                            f"{row['comment']}").rstrip()
@@ -1652,7 +1658,8 @@ class App:
                 put(line, panel_x + 1, "nothing on this band yet")
             room = space - (line - 3)
             calls = [spot["call"] for spot in spots]
-            kinds = [spot["kind"] for spot in spots]
+            kinds = ["here" if spot.get("here") else spot["kind"]
+                     for spot in spots]
             first = 0
             if self.spot and self.spot in calls:    # keep the highlight in view
                 first = max(calls.index(self.spot) - room + 1, 0)
@@ -1660,10 +1667,11 @@ class App:
                 first = max(min(kinds.index("here") - room // 2,
                                 len(spots) - room), 0)
             for spot in spots[first:first + room]:
-                attr = (curses.A_BOLD if spot["kind"] == "here" else
-                        curses.A_REVERSE if spot["call"] == self.spot else
+                attr = (curses.A_REVERSE if spot["kind"] != "here"
+                        and spot["call"] == self.spot else
                         curses.A_DIM if spot["worked"] else
-                        curses.A_BOLD if spot["kind"] == "stored" else 0)
+                        curses.A_BOLD if spot.get("here")
+                        or spot["kind"] == "stored" else 0)
                 put(line, panel_x, spot["text"][:panel_w - 2], attr)
                 line += 1
         per_qso = self.score()["per_qso"]
