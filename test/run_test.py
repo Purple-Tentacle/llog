@@ -391,6 +391,7 @@ assert 138 <= m.distance_km("JO31AA", "JO41AA") <= 142       # 2 degrees east at
 assert m.bearing_deg("JO31AA", "JO41AA") in (89, 90) and m.bearing_deg("JO41AA", "JO31AA") in (270, 271)
 assert m.bearing_deg("JO31AA", "JO32AA") == 0 and m.bearing_deg("JO32AA", "JO31AA") == 180
 assert m.bearing_deg("JO31AA", "JO31AA") is None and m.bearing_deg("JO31AA", "") is None
+assert m.paths(105) == "SP 105° / LP 285°" and m.paths(296) == "SP 296° / LP 116°"
 assert 285 <= m.bearing_deg("JO31TV", "FN42NX") <= 300       # Germany to New England
 assert m.great_circle(51.0, 6.0, 37.53, -91.67)[1] in range(295, 310)   # to mid USA
 assert sqlite3.connect(db).execute(
