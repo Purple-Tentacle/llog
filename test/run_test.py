@@ -290,6 +290,7 @@ assert look("W1AW") == ("K", "NA", "5") and look("EA8/DL1XYZ") == ("EA8", "AF", 
 assert look("DL1XYZ/EA8") == ("EA8", "AF", "33") and look("DL1ABC/P") == ("DL", "EU", "14")
 assert look("EA3ABC/7") == ("EA", "EU", "14") and look("IG9ABC") == ("I", "AF", "33")
 assert look("DL1ABC/MM") is None and look("ZZ9ZZ") is None
+assert cty.lookup("K1ABC")["lon"] == -91.67 and cty.lookup("DL1ABC")["lon"] == 10.0   # east positive
 c6 = m.load_config(work, os.path.join(EX, "ok-dx-rtty.ini"))
 dr6, sr6 = m.dupe_rules(c6), m.score_rules(c6)
 assert sr6["home"]["prefix"] == "DL" and sr6["has_mults"]
@@ -387,6 +388,11 @@ lat, lon = m.locator_position("JO31AA")
 assert abs(lat - 51.0208) < 0.001 and abs(lon - 6.0417) < 0.001
 assert m.distance_km("JO31AA", "JO31AA") == 0 and m.distance_km("JO31AA", "") is None
 assert 138 <= m.distance_km("JO31AA", "JO41AA") <= 142       # 2 degrees east at 51N
+assert m.bearing_deg("JO31AA", "JO41AA") in (89, 90) and m.bearing_deg("JO41AA", "JO31AA") in (270, 271)
+assert m.bearing_deg("JO31AA", "JO32AA") == 0 and m.bearing_deg("JO32AA", "JO31AA") == 180
+assert m.bearing_deg("JO31AA", "JO31AA") is None and m.bearing_deg("JO31AA", "") is None
+assert 285 <= m.bearing_deg("JO31TV", "FN42NX") <= 300       # Germany to New England
+assert m.great_circle(51.0, 6.0, 37.53, -91.67)[1] in range(295, 310)   # to mid USA
 assert sqlite3.connect(db).execute(
     "SELECT grid FROM qso WHERE call='DK2XYZ'").fetchone()[0] == "JO40"
 adif = open(os.path.join(work, "t.adi")).read()

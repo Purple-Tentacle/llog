@@ -8,7 +8,7 @@ One Python file, standard library only, nothing to compile.
 - Typing a frequency in the logger tunes the radio
 - Two entry rows with their own frequency and mode
 - DX cluster panel and band map for the current band, with stations stored for later
-- Locator field with distance to each station
+- Locator field with distance and bearing to each station
 - "Worked before" information from an ADIF logbook file
 - SQLite log file, ADIF and Cabrillo export
 
@@ -115,7 +115,7 @@ sends the spot, Esc cancels. A spot is public and cannot be withdrawn. The
 message line then shows the node's answer: that the spot was accepted (it
 came back from the node), or the node's own text if it refused it.
 
-The panel needs a terminal at least 142 columns wide; on narrower terminals
+The panel needs a terminal at least 147 columns wide; on narrower terminals
 it is hidden. It works without a cluster node too, with stored and worked
 stations only.
 
@@ -203,10 +203,13 @@ Set your own locator in the contest file:
 locator = JO31AA
 ```
 
-The QSO list then shows the distance in km for every QSO that has a locator,
-and the QRZ line shows it for the station you are entering. The distance is
-the great-circle distance between the centres of the two locators (4, 6 or 8
-characters). The locator of a logged QSO can be changed in the list like any
+The QSO list then shows distance (km) and bearing (deg) for every QSO that
+has a locator, and the QRZ line shows both for the station you are entering,
+e.g. `[JO40AB: 163 km, 105°]`. Distance and bearing are along the short
+great-circle path between the centres of the two locators (4, 6 or 8
+characters); the bearing is the direction to point an antenna, with 0° north
+and 90° east. If a station has no locator but a country file is present, the
+QRZ line shows a rough distance and bearing to the middle of its country. The locator of a logged QSO can be changed in the list like any
 other cell. The ADIF export contains `GRIDSQUARE`, `MY_GRIDSQUARE` and
 `DISTANCE`.
 

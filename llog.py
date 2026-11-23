@@ -119,15 +119,33 @@ def locator_position(locator):
     return lat, lon
 
 
+def great_circle(lat1, lon1, lat2, lon2):
+    """(distance in km, initial bearing in degrees) from point 1 to point 2
+    along the short path."""
+    lat1, lon1, lat2, lon2 = map(math.radians, (lat1, lon1, lat2, lon2))
+    a = (math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2)
+         * math.sin((lon2 - lon1) / 2) ** 2)
+    y = math.sin(lon2 - lon1) * math.cos(lat2)
+    x = (math.cos(lat1) * math.sin(lat2)
+         - math.sin(lat1) * math.cos(lat2) * math.cos(lon2 - lon1))
+    return (round(2 * 6371 * math.asin(math.sqrt(a))),
+            round(math.degrees(math.atan2(y, x))) % 360)
+
+
 def distance_km(loc_a, loc_b):
     """Great-circle distance between two locators in km, or None."""
     if not (is_locator(loc_a) and is_locator(loc_b)):
         return None
-    lat1, lon1 = map(math.radians, locator_position(loc_a))
-    lat2, lon2 = map(math.radians, locator_position(loc_b))
-    a = (math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2)
-         * math.sin((lon2 - lon1) / 2) ** 2)
-    return round(2 * 6371 * math.asin(math.sqrt(a)))
+    return great_circle(*locator_position(loc_a), *locator_position(loc_b))[0]
+
+
+def bearing_deg(loc_a, loc_b):
+    """Direction from locator a to locator b in degrees (0 = north,
+    90 = east), or None. The same locator on both sides has no direction."""
+    if not (is_locator(loc_a) and is_locator(loc_b)):
+        return None
+    km, deg = great_circle(*locator_position(loc_a), *locator_position(loc_b))
+    return deg if km else None
 
 
 def my_locator(cfg):
@@ -183,7 +201,12 @@ class CountryFile:
                 continue
             name, cq, itu, cont = (f.strip() for f in fields[:4])
             prefix = fields[7].strip()
+            try:                    # cty.dat counts longitude positive to the west
+                lat, lon = float(fields[4]), -float(fields[5])
+            except ValueError:
+                lat = lon = None
             base = {"name": name, "cont": cont, "cq": cq.lstrip("0"),
+                    "lat": lat, "lon": lon,
                     "itu": itu.lstrip("0"),
                     "prefix": self.WAE.get(prefix, prefix.lstrip("*"))}
             for alias in fields[8].replace("\n", "").split(","):
@@ -1921,11 +1944,11 @@ class App:
         # DX cluster panel to the right of the QSO list
         # it takes the space right of the list columns, up to 60 columns, so
         # that spot comments fit; what is left beyond that goes to the names
-        panel_w = min(w - 112, 60)
-        panel_x = w - panel_w if w >= 142 else None
+        panel_w = min(w - 117, 60)
+        panel_x = w - panel_w if w >= 147 else None
         head = (f"{'#':>4} " + " ".join(f"{title:<{width}}"
                                          for _, width, title in COLUMNS)
-                + f" {'km':>5} {'Pts':<6}")
+                + f" {'km':>5} {'deg':>4} {'Pts':<6}")
         if not panel_x or panel_x - 3 >= len(head) + 4:
             head += "Name"
         put(2, 1, head, curses.A_BOLD)
@@ -1988,7 +2011,9 @@ class App:
                 put(3 + i, x, texts[name][:width].ljust(width), attr)
                 x += width + 1
             km = distance_km(self.my_loc, texts["loc"])
-            tail = f"{'' if km is None else km:>5} {pts:<6}{q['name']}"
+            deg = bearing_deg(self.my_loc, texts["loc"])
+            tail = (f"{'' if km is None else km:>5} "
+                    f"{'' if deg is None else f'{deg}°':>4} {pts:<6}{q['name']}")
             put(3 + i, x, tail[:panel_x - x - 2] if panel_x else tail)
 
         # hints for the active entry row (or the edited QSO)
@@ -2014,10 +2039,18 @@ class App:
                             info["grid"]) if x)
         loc = self.eval["loc"] if self.edit else self.val["loc"]
         km = distance_km(self.my_loc, loc)
-        if km is not None:
-            line += f"   [{loc}: {km} km]"
+        deg = bearing_deg(self.my_loc, loc)
         land = (self.scoring["countries"].lookup(call)
                 if self.scoring["countries"] and is_call(call) else None)
+        if km is not None:
+            line += f"   [{loc}: {km} km" + ("]" if deg is None else f", {deg}°]")
+        elif (land and land["lat"] is not None and is_locator(self.my_loc)
+              and not is_locator(loc)):
+            # no locator: rough direction to the middle of the country
+            far, deg = great_circle(*locator_position(self.my_loc),
+                                    land["lat"], land["lon"])
+            if far > 300:
+                line += f"   [about {far} km, {deg}°]"
         if land:
             line += (f"   [{land['prefix']} {land['name']}, {land['cont']}, "
                      f"CQ zone {land['cq']}]")
