@@ -77,7 +77,8 @@ first. The command is chosen by `tune_command` in the `[rig]` section:
 
 With a cluster node configured, a panel to the right of the QSO list shows
 the spots on the band of the current entry row, newest first: frequency,
-callsign and spot time (UTC). It follows the band when you QSY or switch
+callsign, spot time (UTC) and the spotter's comment, as far as the width
+allows (a full comment needs a terminal about 170 columns wide). It follows the band when you QSY or switch
 rows. Stations you have already worked on that band (by the contest's dupe
 rules) are shown dimmed.
 
@@ -107,7 +108,7 @@ empty; some nodes want a login like `DA2IT-1` for a second connection), asks the
 last 50 spots (`sh/dx 50`) and then collects new spots as they arrive. Spots
 of all bands are kept in memory for `minutes`, so changing band only changes
 what is displayed; nothing is fetched again. The panel needs a terminal at
-least 126 columns wide; on narrower terminals it is hidden. Leave `host`
+least 142 columns wide; on narrower terminals it is hidden. Leave `host`
 empty to switch the cluster off.
 
 ### Testing the cluster functions without a real node

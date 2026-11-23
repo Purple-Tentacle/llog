@@ -1294,7 +1294,7 @@ class App:
                                         spot["freq_hz"], self.mode())
             rows.append(dict(spot, worked=bool(worked), text=(
                 f"{spot['freq_hz'] / 1000:>9.1f} {spot['call']:<12} "
-                f"{spot['time']}")))
+                f"{spot['time']} {spot['comment']}").rstrip()))
         return rows
 
     def spot_step(self, step):
@@ -1390,9 +1390,6 @@ class App:
         put(0, 0, head.ljust(w - 1), curses.A_REVERSE)
 
         # QSO list, with the edited QSO shown as editable cells
-        put(2, 1, f"{'#':>4} " + " ".join(f"{title:<{width}}"
-                                          for _, width, title in COLUMNS)
-            + f" {'km':>5} {'Pts':<6}Name", curses.A_BOLD)
         mult_rows = self.mult_panel(w - 2)
         if h - 13 - len(mult_rows) < 3:      # terminal too small for the panel
             mult_rows = []
@@ -1404,14 +1401,23 @@ class App:
                     self.good_attr if worked else 0)
                 x += len(text) + 1
         # DX cluster panel to the right of the QSO list
-        panel_x = w - 30 if self.cluster.host and w >= 140 else None
+        # it takes the space right of the list columns, up to 60 columns, so
+        # that spot comments fit; what is left beyond that goes to the names
+        panel_w = min(w - 112, 60)
+        panel_x = w - panel_w if self.cluster.host and w >= 142 else None
+        head = (f"{'#':>4} " + " ".join(f"{title:<{width}}"
+                                         for _, width, title in COLUMNS)
+                + f" {'km':>5} {'Pts':<6}")
+        if not panel_x or panel_x - 3 >= len(head) + 4:
+            head += "Name"
+        put(2, 1, head, curses.A_BOLD)
         if panel_x:
             put(2, panel_x, f"DX cluster {band_of(self.freq() or 0) or '?'}",
                 curses.A_BOLD)
             spots = self.cluster_rows()
             line = 3
             if self.cluster.status != "connected":
-                put(line, panel_x, self.cluster.status[:28])
+                put(line, panel_x, self.cluster.status[:panel_w - 2])
                 line += 1
             elif not spots:
                 put(line, panel_x, "no spots on this band yet")
@@ -1422,7 +1428,7 @@ class App:
             for spot in spots[first:first + space - (line - 3)]:
                 attr = curses.A_REVERSE if spot["call"] == self.spot else (
                     curses.A_DIM if spot["worked"] else 0)
-                put(line, panel_x, spot["text"][:28], attr)
+                put(line, panel_x, spot["text"][:panel_w - 2], attr)
                 line += 1
         per_qso = self.score()["per_qso"]
         rows = self.log.rows()
