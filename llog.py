@@ -433,6 +433,91 @@ class Rig(threading.Thread):
                 time.sleep(2)
 
 
+# ------------------------------------------------------------ call history
+ADIF_FIELD = re.compile(r"<([A-Za-z0-9_]+)(?::(\d+))?(?::[^>]*)?>")
+
+
+def parse_adif(text):
+    """Records of an ADIF file as dicts with upper-case field names."""
+    start = re.search(r"<EOH>", text, re.I)
+    pos = start.end() if start else 0
+    records, record = [], {}
+    while True:
+        match = ADIF_FIELD.search(text, pos)
+        if not match:
+            return records
+        name, length = match.group(1).upper(), int(match.group(2) or 0)
+        pos = match.end() + length
+        if name == "EOR":
+            if record:
+                records.append(record)
+            record = {}
+        elif length:
+            record[name] = text[match.end():pos].strip()
+
+
+class CallHistory:
+    """Which stations were worked before, read from an ADIF logbook file."""
+
+    def __init__(self, path=""):
+        self.path = path
+        self.calls = {}
+        if not path:
+            return
+        with open(path, encoding="utf-8", errors="replace") as source:
+            records = parse_adif(source.read())
+        records.sort(key=lambda r: r.get("QSO_DATE", "") + r.get("TIME_ON", ""))
+        for rec in records:                    # oldest first: the latest wins
+            call = rec.get("CALL", "").upper()
+            if not call:
+                continue
+            entry = self.calls.setdefault(
+                call, {"count": 0, "last": "", "band": "", "mode": "",
+                       "bands": [], "name": "", "loc": "", "exch": ""})
+            band = rec.get("BAND", "").lower()
+            if not band and rec.get("FREQ"):
+                try:
+                    band = band_of(round(float(rec["FREQ"]) * 1e6))
+                except ValueError:
+                    pass
+            entry["count"] += 1
+            entry["last"] = rec.get("QSO_DATE", "") or entry["last"]
+            entry["band"], entry["mode"] = band, rec.get("MODE", "").upper()
+            if band and band not in entry["bands"]:
+                entry["bands"].append(band)
+            loc = rec.get("GRIDSQUARE", "")
+            entry["name"] = rec.get("NAME", "") or entry["name"]
+            entry["loc"] = loc.upper() if is_locator(loc) else entry["loc"]
+            entry["exch"] = (rec.get("DARC_DOK") or rec.get("SRX_STRING")
+                             or entry["exch"]).upper()
+
+    def lookup(self, call):
+        """Entry for the callsign; DL1ABC/P falls back to DL1ABC."""
+        return self.calls.get(call) or self.calls.get(base_call(call))
+
+    @staticmethod
+    def text(entry):
+        date = entry["last"]
+        if len(date) == 8:
+            date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+        last = " ".join(x for x in (date, entry["band"], entry["mode"]) if x)
+        parts = [f"{entry['count']} QSO{'s' if entry['count'] != 1 else ''}"
+                 + (f", last {last}" if last else ""),
+                 "bands " + " ".join(entry["bands"]) if entry["bands"] else "",
+                 entry["exch"], entry["name"], entry["loc"]]
+        return "Worked before: " + "  |  ".join(p for p in parts if p)
+
+
+def load_history(cfg):
+    """ADIF file from the contest file or, if that has none, config.ini."""
+    path = (cfg["contest"].get("worked_before", "").strip()
+            or cfg["station"].get("worked_before", "").strip())
+    try:
+        return CallHistory(os.path.expanduser(path))
+    except OSError as exc:
+        sys.exit(f"worked_before file: {exc}")
+
+
 # ----------------------------------------------------------------- cluster
 SPOT_RE = re.compile(r"^DX de\s+([A-Z0-9/#-]+):\s*(\d+(?:\.\d+)?)\s+"
                      r"([A-Z0-9/]+)\s*(.*?)\s*(\d{4})Z", re.I)
@@ -800,7 +885,7 @@ def list_contests(config_dir):
 def load_config(config_dir, contest):
     """Station data from config.ini, contest data from contests/<name>.ini."""
     cfg = configparser.ConfigParser()
-    cfg.read_dict({"station": {"call": "", "email": ""},
+    cfg.read_dict({"station": {"call": "", "email": "", "worked_before": ""},
                    "qrz": {"username": "", "password": ""},
                    "rig": {"host": "127.0.0.1", "port": "4532",
                            "vfo_switch": "retune", "tune_command": "auto"},
@@ -815,7 +900,7 @@ def load_config(config_dir, contest):
                                "dupe_minutes": "0",
                                "points": "", "multipliers": "",
                                "mult_per": "band", "locator": "",
-                               "serial_start": "1"}})
+                               "serial_start": "1", "worked_before": ""}})
     station_file = os.path.join(config_dir, "config.ini")
     if os.path.exists(station_file):
         cfg.read(station_file)
@@ -923,6 +1008,7 @@ class App:
                                cfg["cluster"].getint("minutes"))
         # one entry row per VFO
         self.my_loc = my_locator(cfg)
+        self.history = load_history(cfg)
         self.entry = {v: self.new_entry() for v in "AB"}
         self.row = "A"
         self.manual_freq = {"A": 0, "B": 0}
@@ -984,27 +1070,28 @@ class App:
 
     @staticmethod
     def new_entry():
-        # loc_for: callsign whose QRZ locator was filled in automatically
-        # loc_manual: callsign for which the locator was edited by hand
+        # auto: field -> callsign for which it was filled in automatically
+        # manual: field -> callsign for which it was edited by hand
         return {"val": dict.fromkeys(FIELDS, ""), "focus": 0, "dupe_ok": "",
-                "loc_for": "", "loc_manual": ""}
+                "auto": {}, "manual": {}}
 
     def clear(self):
         self.entry[self.row] = self.new_entry()
 
-    def sync_locators(self):
+    def sync_prefill(self):
         """Fills the locator field from the QRZ lookup. A locator that was
-        typed by hand is never overwritten."""
+        typed or emptied by hand is never overwritten."""
         for entry in self.entry.values():
-            val = entry["val"]
-            if entry["loc_for"] and entry["loc_for"] != val["call"]:
-                val["loc"], entry["loc_for"] = "", ""   # belonged to another call
-            if (val["loc"] or not is_call(val["call"])
-                    or entry["loc_manual"] == val["call"]):
+            val, call = entry["val"], entry["val"]["call"]
+            if entry["auto"].get("loc") not in (None, call):
+                val["loc"] = ""                 # belonged to another callsign
+                del entry["auto"]["loc"]
+            if (val["loc"] or not is_call(call)
+                    or entry["manual"].get("loc") == call):
                 continue
-            grid = (self.qrz.info(val["call"]) or {}).get("grid", "")
+            grid = (self.qrz.info(call) or {}).get("grid", "")
             if is_locator(grid):
-                val["loc"], entry["loc_for"] = grid.upper()[:8], val["call"]
+                val["loc"], entry["auto"]["loc"] = grid.upper()[:8], call
 
     def dupe(self):
         if self.edit:      # compare with the QSOs made before the edited one
@@ -1204,6 +1291,12 @@ class App:
                 self.eval[name] += ch.upper()
 
     # ---- keys
+    def typed(self, name):
+        """The user edited this field: automatic filling keeps its hands off."""
+        entry = self.entry[self.row]
+        entry["auto"].pop(name, None)
+        entry["manual"][name] = self.val["call"]
+
     def entry_key(self, ch):
         name = FIELDS[self.focus]
         if ch in ("\n", "\r", curses.KEY_ENTER):
@@ -1226,14 +1319,12 @@ class App:
         elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
             self.val[name] = self.val[name][:-1]
             self.dupe_ok = ""
-            if name == "loc":                           # now typed by hand
-                self.entry[self.row].update(loc_for="", loc_manual=self.val["call"])
+            self.typed(name)
         elif isinstance(ch, str) and ch.isprintable():
             if len(self.val[name]) < WIDTHS[name]:
                 self.val[name] += ch.upper()
             self.dupe_ok = ""
-            if name == "loc":
-                self.entry[self.row].update(loc_for="", loc_manual=self.val["call"])
+            self.typed(name)
 
     def key(self, scr, ch):
         """Returns False to quit."""
@@ -1424,14 +1515,15 @@ class App:
         put(0, 0, head.ljust(w - 1), curses.A_REVERSE)
 
         # QSO list, with the edited QSO shown as editable cells
+        extra = 1 if self.history.path else 0     # line for "worked before"
         mult_rows = self.mult_panel(w - 2)
-        if h - 13 - len(mult_rows) < 3:      # terminal too small for the panel
+        if h - 13 - extra - len(mult_rows) < 3:   # terminal too small for it
             mult_rows = []
-        space = max(h - 12 - (len(mult_rows) + 1 if mult_rows else 0), 1)
+        space = max(h - 12 - extra - (len(mult_rows) + 1 if mult_rows else 0), 1)
         for n, row in enumerate(mult_rows):
             x = 1
             for text, worked in row:
-                put(h - 9 - len(mult_rows) + n, x, text,
+                put(h - 9 - extra - len(mult_rows) + n, x, text,
                     self.good_attr if worked else 0)
                 x += len(text) + 1
         # DX cluster panel to the right of the QSO list
@@ -1494,6 +1586,12 @@ class App:
 
         # hints for the active entry row (or the edited QSO)
         call = self.eval["call"] if self.edit else self.val["call"]
+        if extra:
+            known = self.history.lookup(call) if is_call(call) else None
+            if known:
+                put(h - 9, 1, self.history.text(known), curses.A_BOLD)
+            elif is_call(call):
+                put(h - 9, 1, "Worked before: no")
         info = self.qrz.info(call) if is_call(call) else None
         if not self.qrz.user:
             line = "QRZ: no username configured"
@@ -1583,7 +1681,7 @@ class App:
                 self.row = self.rig.vfo      # A/B was pressed on the radio
             if self.rig.tune_info:
                 self.msg, self.rig.tune_info = self.rig.tune_info, ""
-            self.sync_locators()
+            self.sync_prefill()
             if self.cluster.reply:
                 self.msg, self.cluster.reply = self.cluster.reply, ""
             self.draw(scr)
@@ -1627,6 +1725,7 @@ def main():
     dupes, scoring = dupe_rules(cfg), score_rules(cfg)   # fail early
     rig_retune(cfg)
     my_locator(cfg)
+    load_history(cfg)
     log = Log(args.logfile)
     if args.score:
         print(score_report(compute_score(log.rows(), dupes, scoring), scoring))

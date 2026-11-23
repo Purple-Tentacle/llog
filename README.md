@@ -9,6 +9,7 @@ One Python file, standard library only, nothing to compile.
 - Two entry rows with their own frequency and mode
 - DX cluster panel with the spots on the current band
 - Locator field with distance to each station
+- "Worked before" information from an ADIF logbook file
 - SQLite log file, ADIF and Cabrillo export
 
 Dupe checking and scoring are configurable per contest.
@@ -161,6 +162,37 @@ the great-circle distance between the centres of the two locators (4, 6 or 8
 characters). The locator of a logged QSO can be changed in the list like any
 other cell. The ADIF export contains `GRIDSQUARE`, `MY_GRIDSQUARE` and
 `DISTANCE`.
+
+## Worked before
+
+llog can tell you whether you have worked a station before, based on an ADIF
+file, for example an export of your main logbook. Set the file in the
+`[station]` section of `config.ini`:
+
+```
+[station]
+worked_before = ~/logbook.adi
+```
+
+A contest file may name its own file with the same key, which then replaces
+the one from `config.ini` for that contest.
+
+As soon as the call field holds a callsign, a line above the QRZ line shows
+what the file knows:
+
+```
+Worked before: 2 QSOs, last 2026-11-03 2m FM  |  bands 70cm 2m  |  N13  |  Horst  |  JO31SW
+```
+
+That is the number of QSOs, date, band and mode of the last one, all bands
+worked, and DOK (or received exchange), name and locator as far as the file
+has them. `DL1ABC/P` is also matched against `DL1ABC`. A station that is not
+in the file shows `Worked before: no`.
+
+This is information only: nothing is filled into the entry fields and it has
+no effect on dupe checking or scoring, which look at the contest log alone.
+The file is read once at startup, so export it again and restart llog to
+bring it up to date.
 
 ## Dupe checking
 

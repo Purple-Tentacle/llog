@@ -208,6 +208,25 @@ mr = {"mults": ["N[0-9][0-9]", "DVN"], "mult_per": "band"}
 F2M = 144300000
 assert m.mult_key(mr, "001 N13", F2M) == ("2m", "N13") and m.mult_key(mr, "n13", F2M) == ("2m", "N13")
 assert m.mult_key(mr, "dvn 5", F2M) == ("2m", "DVN") and m.mult_key(mr, "001 NM", F2M) is None
+# worked-before information from an ADIF file
+adi = os.path.join(work, "logbook.adi")
+open(adi, "w").write("""Exported logbook <ADIF_VER:5>3.1.4 <EOH>
+<CALL:5>DK2NI <QSO_DATE:8>20261103 <TIME_ON:4>1905 <BAND:2>2m <MODE:2>FM <NAME:5>Horst <GRIDSQUARE:6>JO31SW <DARC_DOK:3>N13 <EOR>
+<call:5>dk2ni <qso_date:8>20251007 <time_on:6>190000 <freq:8>432.2000 <mode:3>SSB <eor>
+<CALL:5>W1AW <QSO_DATE:8>20240101 <BAND:3>20M <MODE:2>CW <COMMENT:12>with <odd> x <SRX_STRING:5>05 CT <EOR>
+<QSO_DATE:8>20240101 <EOR>
+""")
+recs = m.parse_adif(open(adi).read())
+assert len(recs) == 4 and recs[2]["COMMENT"] == "with <odd> x" and recs[1]["CALL"] == "dk2ni"
+hist = m.CallHistory(adi)
+e = hist.lookup("DK2NI/P")
+assert (e["count"], e["last"], e["band"], e["mode"], e["bands"]) == (2, "20261103", "2m", "FM", ["70cm", "2m"])
+assert hist.text(e) == ("Worked before: 2 QSOs, last 2026-11-03 2m FM  |  bands 70cm 2m  |  "
+                        "N13  |  Horst  |  JO31SW")
+assert hist.text(hist.lookup("W1AW")) == "Worked before: 1 QSO, last 2024-01-01 20m CW  |  bands 20m  |  05 CT"
+assert hist.lookup("DL1XYZ") is None and not m.CallHistory("").calls
+c5 = m.load_config(work, "wsa"); c5["station"]["worked_before"] = adi
+assert m.load_history(c5).lookup("DK2NI")
 # running number in the sent exchange
 assert m.next_exchange("N99", ["N99"]) == "N99"
 assert m.next_exchange("#", []) == "001" and m.next_exchange("#", [], start=100) == "100"
@@ -237,14 +256,14 @@ assert f"<DISTANCE:3>{m.distance_km('JO31AA', 'JO40')}" in adif
 tcfg = m.load_config(work, "wsa")
 app2 = m.App(tcfg, m.Log(os.path.join(work, "l.db")))
 app2.qrz.cache["DL5ABC"] = {"name": "A", "qth": "", "country": "", "grid": "JO40ab"}
-app2.val["call"] = "DL5ABC"; app2.sync_locators()
+app2.val["call"] = "DL5ABC"; app2.sync_prefill()
 assert app2.val["loc"] == "JO40AB" and app2.my_loc == "JO31AA"
-app2.val["call"] = "DL5ABD"; app2.sync_locators(); assert app2.val["loc"] == ""
-app2.val["call"] = "DL5ABC"; app2.sync_locators(); app2.focus = 4
+app2.val["call"] = "DL5ABD"; app2.sync_prefill(); assert app2.val["loc"] == ""
+app2.val["call"] = "DL5ABC"; app2.sync_prefill(); app2.focus = 4
 for _ in range(6): app2.entry_key("\x7f")                     # user empties the field
-app2.sync_locators(); assert app2.val["loc"] == ""             # stays empty
+app2.sync_prefill(); assert app2.val["loc"] == ""             # stays empty
 for ch in "jn58": app2.entry_key(ch)
-app2.sync_locators(); assert app2.val["loc"] == "JN58"         # typed: not overwritten
+app2.sync_prefill(); assert app2.val["loc"] == "JN58"         # typed: not overwritten
 # dupe rules
 from datetime import datetime, timezone, timedelta
 lg = m.Log(os.path.join(work, "d.db"))
