@@ -272,7 +272,7 @@ Scoring is set in the contest file as well:
 | `points` | `FM:2, SSB:4, CW:6` | QSO points, see below. Empty = 1 point per QSO. |
 | `multipliers` | `N[0-9][0-9], WN, DVN` | Received exchanges that count as a multiplier. If the exchange has several words (`001 N13`), each word is checked. Entries are exact values or patterns (`?` one character, `*` any text, `[0-9]` one digit). `*` alone makes every different exchange a multiplier. |
 | `mult_country` | `yes` | Every DXCC country counts as a multiplier |
-| `mult_calls` | `OK` | Every station from the listed countries (by their main prefix) counts as a multiplier of its own |
+| `mult_calls` | `OK` | Every station from the listed countries (by their main prefix) counts as a multiplier of its own. Ignored when you operate from one of these countries yourself. |
 | `mult_per` | `band` (default) or `contest` | Whether a multiplier counts once per band or once in the whole contest |
 
 **Points.** Each entry is `condition:points`, and conditions can be combined
@@ -322,6 +322,7 @@ prefix (`EA8/DL1ABC` is Canary Islands); `/MM` has no country.
 
 | Option | Example | Meaning |
 | --- | --- | --- |
+| `call` | `OK/DA2IT` | Callsign for this contest, if it differs from the one in `config.ini` |
 | `mode` | `RTTY` | Log every QSO with this mode, whatever the radio reports (useful when the radio is in a generic data mode) |
 | `category_band`, `category_mode`, `category_power` | `ALL`, `RTTY`, `LOW` | Written as `CATEGORY-BAND` etc. into the Cabrillo header |
 

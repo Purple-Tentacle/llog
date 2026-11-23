@@ -277,13 +277,18 @@ def score_rules(cfg):
     by_country = (mult_country or bool(mult_calls)
                   or any(conds & set(RELATIONS) for conds, _ in points))
     countries = load_countries(cfg, needed=by_country)
+    home = countries.lookup(cfg["station"]["call"]) if countries else None
+    if home and home["prefix"].upper() in mult_calls:
+        # operating from one of these countries yourself: its stations are
+        # then no multipliers of their own (OK DX RTTY: "OK/OL stations:
+        # DXCC countries on each band")
+        mult_calls = []
     return {"configured": bool(points or mults or mult_country or mult_calls),
             "points": points or [(frozenset(), 1)],
             "mults": mults, "mult_per": per, "mult_country": mult_country,
             "mult_calls": mult_calls,
             "has_mults": bool(mults or mult_country or mult_calls),
-            "countries": countries,
-            "home": countries.lookup(cfg["station"]["call"]) if countries else None}
+            "countries": countries, "home": home}
 
 
 def qso_points(rules, call, mode, freq_hz):
@@ -1108,6 +1113,8 @@ def load_config(config_dir, contest):
               "mult_per) can be edited in that file.\n")
     if not cfg["contest"]["email"]:
         cfg["contest"]["email"] = cfg["station"].get("email", "")
+    if cfg["contest"].get("call", "").strip():   # e.g. OK/DA2IT for one contest
+        cfg["station"]["call"] = cfg["contest"]["call"].strip().upper()
     cfg["station"]["config_dir"] = config_dir      # not saved; for cty.dat
     return cfg
 

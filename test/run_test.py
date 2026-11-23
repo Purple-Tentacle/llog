@@ -316,6 +316,14 @@ cab6 = os.path.join(work, "ok.cbr"); app6.log.export_cabrillo(cab6, c6); cab6 = 
 assert "CONTEST: OK-DX-RTTY" in cab6 and "CATEGORY-BAND: ALL" in cab6
 assert "CATEGORY-POWER: LOW" in cab6 and "CATEGORY-MODE: RTTY" in cab6
 assert "CLAIMED-SCORE: 2" in cab6 and "QSO: 14085 RY " in cab6 and " 599 14 " in cab6
+# the same contest operated from OK: own callsign per contest, no station multipliers
+c7 = m.load_config(work, os.path.join(EX, "ok-dx-rtty.ini"))
+c7["contest"]["call"] = "ok/da2it"; open(os.path.join(work, "contests", "okp.ini"), "w").write(
+    "[contest]\n" + "\n".join(f"{k} = {v}" for k, v in c7["contest"].items() if v))
+c7 = m.load_config(work, "okp"); sr7 = m.score_rules(c7)
+assert c7["station"]["call"] == "OK/DA2IT" and sr7["home"]["prefix"] == "OK"
+assert m.qso_mults(sr7, "OK2BBB", "15", 14085000) == [("20m", "OK")]
+assert m.qso_points(sr7, "OK2BBB", "RTTY", 3585000) == 3 and m.qso_points(sr7, "K1ABC", "RTTY", 3585000) == 6
 # old style points still work, and no country file is needed for them
 assert m.qso_points(m.score_rules(m.load_config(work, "wsa")), "DL1A", "FM", 144300000) == 2
 # running number in the sent exchange
