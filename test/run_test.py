@@ -199,6 +199,10 @@ assert rig.vfo_mode and rig.online and rig.freq == {"A": 144300000, "B": 4322000
 rig.set_freq("B", 433500000); time.sleep(1)
 assert "F VFOB 433500000" in vstate["cmds"] and rig.freq["B"] == 433500000
 rig.select("B"); time.sleep(1); assert "V VFOB" in vstate["cmds"]
+app3 = m.App(m.load_config(work, "wsa"), m.Log(os.path.join(work, "c.db")))
+app3.manual_freq["A"] = 14060000
+app3.cluster.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
+assert app3.cluster_rows()[0]["text"] == "14025.0 K1ABC        2153 CQ TEST"   # no indent
 # locators and distance
 assert m.is_locator("jo31") and m.is_locator("JO31AA") and m.is_locator("JO31AA55")
 assert not m.is_locator("JO3") and not m.is_locator("ZZ99") and not m.is_locator("")

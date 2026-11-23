@@ -1288,12 +1288,15 @@ class App:
     def cluster_rows(self):
         """Spots on the band of the current row, newest first, with a
         'worked' flag (dupe by the contest rules) and the panel text."""
+        spots = self.cluster.spots(band_of(self.freq() or 0))
+        # frequencies right-aligned among themselves, flush with the header
+        width = max((len(f"{s['freq_hz'] / 1000:.1f}") for s in spots), default=0)
         rows = []
-        for spot in self.cluster.spots(band_of(self.freq() or 0)):
+        for spot in spots:
             worked = self.log.find_dupe(self.rules, spot["call"],
                                         spot["freq_hz"], self.mode())
             rows.append(dict(spot, worked=bool(worked), text=(
-                f"{spot['freq_hz'] / 1000:>9.1f} {spot['call']:<12} "
+                f"{spot['freq_hz'] / 1000:>{width}.1f} {spot['call']:<12} "
                 f"{spot['time']} {spot['comment']}").rstrip()))
         return rows
 
