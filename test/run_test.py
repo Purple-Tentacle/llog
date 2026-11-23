@@ -146,7 +146,8 @@ send("\x1bm"); send("t", 1.5)                                  # Alt-M, T: ATU t
 send("\x1bm"); send("\x1b")                                   # Alt-M, Esc: menu closed again
 send("\x1bm"); send("\r")                                     # Alt-M, Enter: ADIF
 send("\x1bm"); send("\x1bOB"); send("\r")                     # Alt-M, Down, Enter: Cabrillo                            # F2, F3 exports
-send("\x1b[21~", 1.0)                                         # F10 quit
+send("\x1b[21~")                                              # F10 no longer quits
+send("\x1bm"); send("q", 1.0)                                  # Alt-M, Q: quit
 os.waitpid(pid, 0)
 
 rows = sqlite3.connect(db).execute(

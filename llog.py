@@ -1319,7 +1319,7 @@ class App:
     # ---- keys
     # ---- menu (Alt-M)
     MENU = (("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"),
-            ("t", "ATU tune (transmits)", "atu"))
+            ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit"))
 
     def atu_tune(self):
         if self.rig.online:
@@ -1331,6 +1331,7 @@ class App:
             self.msg = "Rig offline - cannot start ATU tune."
 
     def menu_key(self, ch):
+        """Returns False to quit."""
         hotkeys = [key for key, _, _ in self.MENU]
         if ch == curses.KEY_UP:
             self.menu = (self.menu - 1) % len(self.MENU)
@@ -1342,12 +1343,15 @@ class App:
                 self.menu = hotkeys.index(ch.lower())
             action = self.MENU[self.menu][2]
             self.menu = None
+            if action == "quit":
+                return False
             if action == "atu":
                 self.atu_tune()
             else:
                 self.export(action)
         elif ch == "\x1b" or ch in ALT_M:
             self.menu, self.msg = None, "Menu closed."
+        return True
 
     def typed(self, name):
         """The user edited this field: automatic filling keeps its hands off."""
@@ -1392,9 +1396,8 @@ class App:
             self.prompt_key(ch)
             return True
         if self.menu is not None:
-            self.menu_key(ch)
-            return True
-        if ch in (curses.KEY_F10, "\x18"):                       # F10, Ctrl-X
+            return self.menu_key(ch)
+        if ch == "\x18":            # Ctrl-X: quit without the menu, as a fallback
             return False
         if ch in ALT_M:
             self.menu, self.msg = 0, "Menu: Up/Down, Enter selects, Esc closes."
@@ -1801,7 +1804,7 @@ class App:
         put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
                       "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn panel | "
                       "F6 spot | F7 map | F9 store | F8 delete | "
-                      "Alt-M menu | F10 quit ".ljust(w - 1),
+                      "Alt-M menu (export, ATU, quit) ".ljust(w - 1),
             curses.A_REVERSE)
         if self.menu is not None:        # menu box in the middle of the screen
             width = max(len(title) for _, title, _ in self.MENU) + 10
