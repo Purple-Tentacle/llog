@@ -937,7 +937,7 @@ class Log:
         rows = [dict(zip(("id",) + self.COLS, r)) for r in self.db.execute(sql)]
         return rows[-last:] if last else rows
 
-    def backup(self, folder="", keep=10):
+    def backup(self, folder="", keep=50):
         """Writes a consistent copy of the log file and removes old copies.
         Default folder: 'backups' next to the log file."""
         folder = os.path.expanduser(folder) or os.path.join(
@@ -1112,7 +1112,7 @@ def load_config(config_dir, contest):
                            "vfo_switch": "retune", "tune_command": "auto"},
                    "cluster": {"host": "", "port": "7300", "minutes": "30",
                                "call": ""},
-                   "backup": {"minutes": "5", "keep": "10", "folder": ""},
+                   "backup": {"minutes": "5", "keep": "50", "folder": ""},
                    "contest": {"contest": "", "exchange_sent": "",
                                "category_operator": "SINGLE-OP",
                                "email": "", "specific": "",

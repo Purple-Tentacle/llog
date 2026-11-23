@@ -172,13 +172,13 @@ environment variables `QRZ_USERNAME` and `QRZ_PASSWORD` override the file.
 Every QSO is written to the log file at once. In addition llog copies the
 log file every 5 minutes, and once more when you quit, if anything has
 changed since the last copy. The copies go to a `backups` folder next to the
-log file, named `<logname>-<UTC date>-<time>.db`, and the 10 newest are
+log file, named `<logname>-<UTC date>-<time>.db`, and the 50 newest are
 kept.
 
 ```
 [backup]
 minutes = 5
-keep = 10
+keep = 50
 folder =
 ```
 
