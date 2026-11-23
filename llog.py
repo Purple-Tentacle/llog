@@ -399,7 +399,7 @@ def compute_score(rows, dupes, rules):
                 not dupes["minutes"]
                 or (when - last).total_seconds() < dupes["minutes"] * 60):
             stat["dupes"] += 1
-            per_qso[q["id"]] = (0, True, False)
+            per_qso[q["id"]] = (0, True, 0)
             continue
         worked[key] = when
         points = qso_points(rules, q["call"], q["mode"], q["freq_hz"])
@@ -407,7 +407,7 @@ def compute_score(rows, dupes, rules):
         mults |= new
         stat["mults"] += len(new)
         stat["points"] += points
-        per_qso[q["id"]] = (points, False, bool(new))
+        per_qso[q["id"]] = (points, False, len(new))   # points, dupe, new mults
     total_points = sum(b["points"] for b in bands.values())
     return {"points": total_points, "mults": len(mults), "seen": mults,
             "score": total_points * len(mults) if rules["has_mults"]
@@ -1909,8 +1909,10 @@ class App:
                 end = max(min(ids.index(self.edit["id"]) + 1 + space // 2,
                               len(rows)), min(space, len(rows)))
         for i, q in enumerate(rows[max(end - space, 0):end]):
-            points, is_dupe, is_mult = per_qso.get(q["id"], (0, False, False))
-            pts = "DUPE" if is_dupe else f"{points}{'+M' if is_mult else ''}"
+            points, is_dupe, new_mults = per_qso.get(q["id"], (0, False, 0))
+            pts = "DUPE" if is_dupe else str(points) + (
+                "" if not new_mults else "+M" if new_mults == 1
+                else f"+{new_mults}M")
             editing = self.edit and q["id"] == self.edit["id"]
             texts = self.eval if editing else cells(q)
             put(3 + i, 1, f"{q['id']:>4}", curses.A_BOLD if editing else 0)

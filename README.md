@@ -299,7 +299,7 @@ the points when no multipliers are configured. Dupes (according to the dupe
 rules) get no points and no multiplier.
 
 With scoring configured, llog shows the score in the header, the points of
-each QSO in the list (`+M` marks a new multiplier), a green `NEW MULTIPLIER`
+each QSO in the list (`+M` marks a new multiplier, `+2M` two of them), a green `NEW MULTIPLIER`
 line while you enter a station that brings one, and writes `CLAIMED-SCORE`
 into the Cabrillo file. `python3 llog.py wsa wsa.db --score` prints the score
 per band.

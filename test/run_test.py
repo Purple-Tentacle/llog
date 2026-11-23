@@ -341,6 +341,7 @@ r = m.compute_score(cw(("DL1ABC", "H24"),     # prefix DL1 + DOK H24
                        ("DL1ABC", "H24")),    # dupe (every station once)
                     dr8, sr8)
 assert (r["points"], r["mults"], r["score"]) == (5, 6, 30), r
+assert [r["per_qso"][i][2] for i in range(1, 7)] == [2, 0, 1, 1, 2, 0]   # new mults per QSO
 assert m.qso_mults(sr8, "DM6EE", "h33", 3530000) == [("", "H33"), ("", "pfx:DM6")]
 app8 = m.App(c8, m.Log(os.path.join(work, "cwa.db"))); app8.manual_freq["A"] = 3530000
 app8.val["call"] = "DM6EE"; app8.val["exch"] = "H33"; assert app8.new_mult() == "H33, DM6"
