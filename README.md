@@ -156,7 +156,7 @@ Station data and contest data live in separate files under `~/.config/llog/`:
 
 | File | Content |
 | --- | --- |
-| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port, `vfo_switch`, `tune_command`, DX cluster node |
+| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port, `vfo_switch`, `tune_command`, DX cluster node, backup settings |
 | `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, your locator, dupe rules, scoring |
 
 Both are created by a few questions the first time they are needed: the
@@ -166,6 +166,26 @@ An `email` entry in a contest file overrides the station e-mail.
 
 The QRZ password is stored in `config.ini` in plain text (file mode 600); the
 environment variables `QRZ_USERNAME` and `QRZ_PASSWORD` override the file.
+
+## Backup
+
+Every QSO is written to the log file at once. In addition llog copies the
+log file every 5 minutes, and once more when you quit, if anything has
+changed since the last copy. The copies go to a `backups` folder next to the
+log file, named `<logname>-<UTC date>-<time>.db`, and the 10 newest are
+kept.
+
+```
+[backup]
+minutes = 5
+keep = 10
+folder =
+```
+
+`minutes = 0` switches the backup off. `folder` can point somewhere else, for
+example a USB stick. A backup is a complete log file: to go back to one, copy
+it to the place of the log file, or start llog with it directly
+(`python3 llog.py wsa backups/wsa-20261201-190500.db`).
 
 ## Locator and distance
 

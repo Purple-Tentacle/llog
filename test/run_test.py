@@ -150,6 +150,7 @@ send("\x1b[21~")                                              # F10 no longer qu
 send("\x1bm"); send("q", 1.0)                                  # Alt-M, Q: quit
 os.waitpid(pid, 0)
 
+assert [f for f in os.listdir(os.path.join(work, "backups")) if f.startswith("t-")]  # on quit
 rows = sqlite3.connect(db).execute(
     "SELECT call,freq_hz,mode,rst_s,rst_r,exch_s,exch_r FROM qso").fetchall()
 print(rows)
@@ -349,6 +350,19 @@ app8.val["call"] = "DM6EE"; app8.val["exch"] = "H33"; assert app8.new_mult() == 
 app8.enter(); assert [t for row in app8.mult_panel(80) for t, _ in row][1:] == ["DM6", "H33"]
 # old style points still work, and no country file is needed for them
 assert m.qso_points(m.score_rules(m.load_config(work, "wsa")), "DL1A", "FM", 144300000) == 2
+# periodic backup
+bdir = os.path.join(work, "bk"); c9 = m.load_config(work, "wsa"); c9["backup"]["folder"] = bdir
+c9["backup"]["keep"] = "2"
+app9 = m.App(c9, m.Log(os.path.join(work, "b.db"))); app9.manual_freq["A"] = 144300000
+assert app9.auto_backup(force=True) is None                  # nothing changed yet
+app9.val["call"] = "DL1AA"; app9.enter()
+assert app9.auto_backup() is None                            # 5 minutes not over
+app9.backup_at -= 301; first = app9.auto_backup()
+assert first and sqlite3.connect(first).execute("SELECT call FROM qso").fetchall() == [("DL1AA",)]
+app9.backup_at -= 301; assert app9.auto_backup() is None     # unchanged: no new copy
+for call in ("DL1BB", "DL1CC"):
+    time.sleep(1.1); app9.val["call"] = call; app9.enter(); assert app9.auto_backup(force=True)
+assert len(os.listdir(bdir)) == 2 and os.path.basename(first) not in os.listdir(bdir)   # keep = 2
 # running number in the sent exchange
 assert m.next_exchange("N99", ["N99"]) == "N99"
 assert m.next_exchange("#", []) == "001" and m.next_exchange("#", [], start=100) == "100"

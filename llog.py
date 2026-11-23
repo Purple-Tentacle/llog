@@ -937,6 +937,26 @@ class Log:
         rows = [dict(zip(("id",) + self.COLS, r)) for r in self.db.execute(sql)]
         return rows[-last:] if last else rows
 
+    def backup(self, folder="", keep=10):
+        """Writes a consistent copy of the log file and removes old copies.
+        Default folder: 'backups' next to the log file."""
+        folder = os.path.expanduser(folder) or os.path.join(
+            os.path.dirname(os.path.abspath(self.path)), "backups")
+        os.makedirs(folder, exist_ok=True)
+        stem = os.path.splitext(os.path.basename(self.path))[0]
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        target = os.path.join(folder, f"{stem}-{stamp}.db")
+        copy = sqlite3.connect(target)
+        try:
+            self.db.backup(copy)
+        finally:
+            copy.close()
+        old = sorted(name for name in os.listdir(folder)
+                     if re.fullmatch(re.escape(stem) + r"-\d{8}-\d{6}\.db", name))
+        for name in old[:-keep] if keep > 0 else []:
+            os.remove(os.path.join(folder, name))
+        return target
+
     def newest(self):
         """The QSO that was entered last (not the latest by time), or None."""
         sql = "SELECT id," + ",".join(self.COLS) + " FROM qso ORDER BY id DESC LIMIT 1"
@@ -1092,6 +1112,7 @@ def load_config(config_dir, contest):
                            "vfo_switch": "retune", "tune_command": "auto"},
                    "cluster": {"host": "", "port": "7300", "minutes": "30",
                                "call": ""},
+                   "backup": {"minutes": "5", "keep": "10", "folder": ""},
                    "contest": {"contest": "", "exchange_sent": "",
                                "category_operator": "SINGLE-OP",
                                "email": "", "specific": "",
@@ -1233,6 +1254,14 @@ class App:
         self.eval = {}        # its cell texts while editing
         self.efocus = 1       # edited cell (index into COLUMNS)
         self.msg = "Type a callsign. Enter = log QSO."
+        try:
+            self.backup_every = cfg["backup"].getint("minutes") * 60
+            self.backup_keep = cfg["backup"].getint("keep")
+        except ValueError:
+            sys.exit("[backup] minutes and keep in config.ini must be numbers")
+        self.backup_folder = cfg["backup"]["folder"].strip()
+        self.backup_at = time.time()             # time of the last check
+        self.backup_state = log.db.total_changes  # log state at the last backup
 
     # ---- the active entry row
     @property
@@ -1511,6 +1540,24 @@ class App:
                 self.eval[name] += ch.upper()
 
     # ---- keys
+    def auto_backup(self, force=False):
+        """Copies the log file every few minutes if it has changed since the
+        last copy; force=True (on quit) skips the waiting time."""
+        if not self.backup_every:
+            return None
+        if not force and time.time() - self.backup_at < self.backup_every:
+            return None
+        self.backup_at = time.time()
+        if self.log.db.total_changes == self.backup_state:
+            return None
+        try:
+            target = self.log.backup(self.backup_folder, self.backup_keep)
+        except (OSError, sqlite3.Error) as exc:
+            self.msg = f"BACKUP FAILED: {exc}"
+            return None
+        self.backup_state = self.log.db.total_changes
+        return target
+
     # ---- menu (Alt-M)
     MENU = (("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"),
             ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit"))
@@ -2045,6 +2092,7 @@ class App:
             if self.rig.tune_info:
                 self.msg, self.rig.tune_info = self.rig.tune_info, ""
             self.sync_prefill()
+            self.auto_backup()
             if self.cluster.reply:
                 self.msg, self.cluster.reply = self.cluster.reply, ""
             self.draw(scr)
@@ -2108,7 +2156,11 @@ def main():
         if args.export_cabrillo:
             print("Cabrillo:", log.export_cabrillo(args.export_cabrillo, cfg))
         return
-    curses.wrapper(App(cfg, log).run)
+    app = App(cfg, log)
+    curses.wrapper(app.run)
+    saved = app.auto_backup(force=True)
+    if saved:
+        print(f"Backup: {saved}")
     print(f"{log.count()} QSOs in {args.logfile}")
     if scoring["configured"]:
         print(score_report(compute_score(log.rows(), dupes, scoring), scoring))
