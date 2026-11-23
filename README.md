@@ -65,8 +65,8 @@ frequencies or modes, not listening to both.
 
 ## ATU tune
 
-F5 starts an antenna tuner cycle on the radio, the same as pressing its ATU
-button. The radio transmits a carrier while it tunes, so check the frequency
+"ATU tune" in the menu (Alt-M, then T) starts an antenna tuner cycle on the
+radio, the same as pressing its ATU button. The radio transmits a carrier while it tunes, so check the frequency
 first. The command is chosen by `tune_command` in the `[rig]` section:
 
 | Value | Command sent to rigctld |
@@ -310,13 +310,12 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | Esc | Clear the entry line |
 | `<frequency>` Enter | QSY (`7030.5` = kHz, below 1000 = MHz, e.g. `144.3`) |
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
-| Alt-M | Menu: export ADIF (`<logfile>.adi`) or Cabrillo (`<CALL>-<date>-1.cbr`) |
+| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), ATU tune |
 | `\` | Switch to the other entry row (A/B) |
 | PgDn / PgUp | Highlight a station in the panel; Enter in an empty call field takes it |
 | F7 | Switch the panel between newest first and band map |
 | F9 or Ctrl-J | Store the station in the call field for later |
 | Del | Remove the highlighted stored station |
-| F5 | Start an ATU tune cycle on the radio (it transmits a carrier) |
 | F6 | Spot a station on the DX cluster (asks for a comment first) |
 | Up / Down | Edit a logged QSO in the list (see below) |
 | F8 | Delete the last QSO, or the selected one while editing |
@@ -326,8 +325,8 @@ The score is your claimed score; the organiser's evaluation is what counts.
 
 Alt-M opens a small menu in the middle of the screen. Up and Down move, Enter
 selects, Esc closes it; the letter in front of an entry selects it directly
-(`A` for ADIF, `C` for Cabrillo). The exports are written next to the log
-file and the message line shows the file name.
+(`A` for ADIF, `C` for Cabrillo, `T` for ATU tune). The exports are written
+next to the log file and the message line shows the file name.
 
 ### Editing a QSO
 

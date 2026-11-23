@@ -1318,7 +1318,17 @@ class App:
 
     # ---- keys
     # ---- menu (Alt-M)
-    MENU = (("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"))
+    MENU = (("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"),
+            ("t", "ATU tune (transmits)", "atu"))
+
+    def atu_tune(self):
+        if self.rig.online:
+            self.msg = "ATU tune ..."
+            self.rig.tune_info = ""
+            self.rig.tune(self.cfg["rig"].get("tune_command", "auto").strip()
+                          or "auto")
+        else:
+            self.msg = "Rig offline - cannot start ATU tune."
 
     def menu_key(self, ch):
         hotkeys = [key for key, _, _ in self.MENU]
@@ -1332,7 +1342,10 @@ class App:
                 self.menu = hotkeys.index(ch.lower())
             action = self.MENU[self.menu][2]
             self.menu = None
-            self.export(action)
+            if action == "atu":
+                self.atu_tune()
+            else:
+                self.export(action)
         elif ch == "\x1b" or ch in ALT_M:
             self.menu, self.msg = None, "Menu closed."
 
@@ -1385,14 +1398,6 @@ class App:
             return False
         if ch in ALT_M:
             self.menu, self.msg = 0, "Menu: Up/Down, Enter selects, Esc closes."
-        elif ch == curses.KEY_F5:
-            if self.rig.online:
-                self.msg = "ATU tune ..."
-                self.rig.tune_info = ""
-                self.rig.tune(self.cfg["rig"].get("tune_command", "auto").strip()
-                              or "auto")
-            else:
-                self.msg = "Rig offline - cannot start ATU tune."
         elif ch == curses.KEY_F6:
             self.spot_send()
         elif ch == curses.KEY_F7:
@@ -1795,7 +1800,7 @@ class App:
             put(h - 2, 1, self.msg)
         put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
                       "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn panel | "
-                      "F5 ATU | F6 spot | F7 map | F9 store | F8 delete | "
+                      "F6 spot | F7 map | F9 store | F8 delete | "
                       "Alt-M menu | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
         if self.menu is not None:        # menu box in the middle of the screen
