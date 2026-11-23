@@ -256,6 +256,20 @@ def rig_retune(cfg):
     return how == "retune"
 
 
+def next_exchange(template, sent_so_far, start=1):
+    """The exchange to send next. '#' in the template is a running number
+    (at least three digits): '#' -> 001, '# N99' -> 001 N99. The number is
+    one more than the highest already sent, so deleting a QSO never makes
+    a number repeat."""
+    if "#" not in template:
+        return template
+    head, tail = template.split("#", 1)
+    pattern = re.compile(re.escape(head) + r"(\d+)" + re.escape(tail) + "$")
+    used = [int(m.group(1)) for m in map(pattern.match, sent_so_far) if m]
+    number = max(used) + 1 if used else start
+    return f"{head}{number:03d}{tail}"
+
+
 def ascii_only(text):
     return unicodedata.normalize("NFKD", text or "").encode(
         "ascii", "ignore").decode()
@@ -797,7 +811,8 @@ def load_config(config_dir, contest):
                                "dupe_exchange": "no",
                                "dupe_minutes": "0",
                                "points": "", "multipliers": "",
-                               "mult_per": "band", "locator": ""}})
+                               "mult_per": "band", "locator": "",
+                               "serial_start": "1"}})
     station_file = os.path.join(config_dir, "config.ini")
     if os.path.exists(station_file):
         cfg.read(station_file)
@@ -822,7 +837,8 @@ def load_config(config_dir, contest):
         name = os.path.splitext(os.path.basename(contest))[0].upper()
         con["contest"] = ask("Contest name for the log header", name)
         con["exchange_sent"] = ask(
-            "Exchange you send (e.g. your DOK, '#' = serial number, '-' = none)",
+            "Exchange you send (e.g. your DOK; '#' = running number, also "
+            "inside a text like '# N99'; '-' = none)",
             con["exchange_sent"] or cfg["station"].get("exchange_sent", "")
         ).upper()
         con["category_operator"] = ask("Operator category",
@@ -892,6 +908,7 @@ class App:
         self.rules = dupe_rules(cfg)
         self.scoring = score_rules(cfg)
         self._score = (None, None)   # (log state, result)
+        self._serial = (None, "")    # (log state, next exchange to send)
         self.rig = Rig(cfg["rig"]["host"], cfg["rig"].getint("port"),
                        retune=rig_retune(cfg))
         self.qrz = Qrz(os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
@@ -952,8 +969,15 @@ class App:
         return "59" if self.mode(row) in ("SSB", "FM", "AM") else "599"
 
     def exch_sent(self):
-        sent = self.cfg["contest"]["exchange_sent"]
-        return f"{self.log.count() + 1:03d}" if sent == "#" else sent
+        template = self.cfg["contest"]["exchange_sent"]
+        if "#" not in template:
+            return template
+        state = self.log.db.total_changes
+        if self._serial[0] != state:
+            self._serial = (state, next_exchange(
+                template, [q["exch_s"] for q in self.log.rows()],
+                self.cfg["contest"].getint("serial_start", 1)))
+        return self._serial[1]
 
     @staticmethod
     def new_entry():

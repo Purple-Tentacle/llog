@@ -203,6 +203,19 @@ app3 = m.App(m.load_config(work, "wsa"), m.Log(os.path.join(work, "c.db")))
 app3.manual_freq["A"] = 14060000
 app3.cluster.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
 assert app3.cluster_rows()[0]["text"] == "14025.0 K1ABC        2153 CQ TEST"   # no indent
+# running number in the sent exchange
+assert m.next_exchange("N99", ["N99"]) == "N99"
+assert m.next_exchange("#", []) == "001" and m.next_exchange("#", [], start=100) == "100"
+assert m.next_exchange("#", ["001", "002", "N99"]) == "003"
+assert m.next_exchange("#", ["001", "003"]) == "004"            # 002 deleted: no repeat
+assert m.next_exchange("# N99", ["001 N99", "002 N99", "17"]) == "003 N99"
+assert m.next_exchange("N99-#", ["N99-999"]) == "N99-1000"
+c4 = m.load_config(work, "wsa"); c4["contest"]["exchange_sent"] = "# N99"
+app4 = m.App(c4, m.Log(os.path.join(work, "s.db"))); app4.manual_freq["A"] = 144300000
+for call in ("DL1AA", "DL1BB"):
+    app4.val["call"] = call; app4.enter()
+assert [q["exch_s"] for q in app4.log.rows()] == ["001 N99", "002 N99"]
+assert app4.exch_sent() == "003 N99"
 # locators and distance
 assert m.is_locator("jo31") and m.is_locator("JO31AA") and m.is_locator("JO31AA55")
 assert not m.is_locator("JO3") and not m.is_locator("ZZ99") and not m.is_locator("")

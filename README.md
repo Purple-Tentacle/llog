@@ -283,6 +283,199 @@ Exports also work without the UI:
 python3 llog.py wsa wsa-2026-12.db --export-adif out.adi --export-cabrillo out.cbr
 ```
 
+## Exchange and running number
+
+`exchange_sent` in the contest file is the text you send. A `#` in it is
+replaced by a running number with at least three digits:
+
+| `exchange_sent` | You send |
+| --- | --- |
+| `N99` | `N99` for every QSO |
+| `#` | `001`, `002`, `003`, ... |
+| `# N99` | `001 N99`, `002 N99`, ... |
+
+The next number is shown under "Exch sent" and is stored with the QSO when
+you log it. It is always one more than the highest number already in the log,
+so deleting a QSO never makes a number repeat, and a log continued on another
+day carries on counting. `serial_start = 100` in the contest file makes a new
+log start at another number. The sent exchange of a logged QSO can be
+corrected in the QSO list like any other cell.
+
+The received exchange is a free-text field, so a received number is typed as
+the station sends it.
+
+## Testing the cluster functions without a real node
+
+Do not send made-up spots to a real cluster: they are passed on to nodes and
+users worldwide. `tools/fake_cluster.py` is a small local cluster for this:
+
+```
+python3 tools/fake_cluster.py
+```
+
+Then set `host = 127.0.0.1` and `port = 7300` in the `[cluster]` section. It
+sends a made-up spot every 20 seconds, answers the startup `sh/dx`, and
+echoes the spots you send with F6. With `call = REFUSE` it refuses your
+spots, so you can see how llog shows that.
+
+## Configuration
+
+Station data and contest data live in separate files under `~/.config/llog/`:
+
+| File | Content |
+| --- | --- |
+| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port, `vfo_switch`, `tune_command`, DX cluster node |
+| `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, your locator, dupe rules, scoring |
+
+Both are created by a few questions the first time they are needed: the
+station file on the very first start, a contest file the first time you start
+llog with a new contest name. Copy or edit the `.ini` files to change them.
+An `email` entry in a contest file overrides the station e-mail.
+
+The QRZ password is stored in `config.ini` in plain text (file mode 600); the
+environment variables `QRZ_USERNAME` and `QRZ_PASSWORD` override the file.
+
+## Locator and distance
+
+Each entry row has a locator field. After the QRZ lookup (Tab or Space after
+the callsign) it is filled with the locator from QRZ; type over it if the
+station gives a different one, for example when portable. A locator you typed
+or emptied by hand is not overwritten for that callsign.
+
+Set your own locator in the contest file:
+
+```
+locator = JO31AA
+```
+
+The QSO list then shows the distance in km for every QSO that has a locator,
+and the QRZ line shows it for the station you are entering. The distance is
+the great-circle distance between the centres of the two locators (4, 6 or 8
+characters). The locator of a logged QSO can be changed in the list like any
+other cell. The ADIF export contains `GRIDSQUARE`, `MY_GRIDSQUARE` and
+`DISTANCE`.
+
+## Dupe checking
+
+While you type a callsign, llog shows a red `DUPE` line with the earlier QSO.
+A dupe is not blocked: the first Enter warns, a second Enter logs it anyway.
+
+The rules are set in the contest file:
+
+| Option | Values | Meaning |
+| --- | --- | --- |
+| `dupe_check` | `band` (default) | A station counts once per band |
+| | `band_mode` | Once per band and mode class |
+| | `mode` | Once per mode class, on any band |
+| | `once` | Once in the whole contest |
+| | `off` | No dupe check |
+| `dupe_ignore_suffix` | `no` / `yes` | `yes`: `DL1ABC/P` and `DL1ABC` are the same station |
+| `dupe_exchange` | `no` / `yes` | `yes`: a station counts again when it sends a different exchange (rovers and mobiles that changed location) |
+| `dupe_minutes` | `0` or a number | A station may be worked again after this many minutes; `0` = never |
+
+Mode classes are CW, phone (SSB, FM and AM together) and digital.
+
+Settings for some contests:
+
+| Contest | Setting |
+| --- | --- |
+| WNA, WSA, CQ WW, CQ WPX, ARRL RTTY Roundup | `dupe_check = band` |
+| IARU HF Championship | `dupe_check = band_mode` |
+| ARRL November Sweepstakes | `dupe_check = once` |
+| ARRL 10 GHz and Up | `dupe_check = band`, `dupe_exchange = yes` |
+
+Always check the current rules of the contest you enter.
+
+Example `contests/wsa.ini`:
+
+```
+[contest]
+contest = WSA
+exchange_sent = N99
+category_operator = SINGLE-OP
+specific = N99
+dupe_check = band
+dupe_ignore_suffix = no
+dupe_exchange = no
+dupe_minutes = 0
+```
+
+## Scoring
+
+Scoring is set in the contest file as well:
+
+| Option | Example | Meaning |
+| --- | --- | --- |
+| `points` | `FM:2, SSB:4, CW:6` | QSO points per mode. Keys are a mode (`CW`, `SSB`, `FM`, `AM`, `RTTY`), a mode class (`PH`, `DIG`) or `*` for everything else. Modes without an entry score 0. Empty = 1 point per QSO. |
+| `multipliers` | `N[0-9][0-9], WN, DVN` | Received exchanges that count as a multiplier. Entries are exact values or patterns (`?` one character, `*` any text, `[0-9]` one digit). `*` alone makes every different exchange a multiplier. Empty = no multipliers. |
+| `mult_per` | `band` (default) or `contest` | Whether a multiplier counts once per band or once in the whole contest |
+
+The score is the sum of QSO points times the number of multipliers, or just
+the points when no multipliers are configured. Dupes (according to the dupe
+rules) get no points and no multiplier.
+
+With scoring configured, llog shows the score in the header, the points of
+each QSO in the list (`+M` marks a new multiplier), a green `NEW MULTIPLIER`
+line while you type an exchange that is new on the band, and writes
+`CLAIMED-SCORE` into the Cabrillo file. `python3 llog.py wsa wsa.db --score`
+prints the score per band.
+
+Ready-made contest files for WNA and WSA are in `examples/`. Copy them to
+`~/.config/llog/contests/` and enter your DOK:
+
+```
+mkdir -p ~/.config/llog/contests
+cp examples/wna.ini examples/wsa.ini ~/.config/llog/contests/
+```
+
+Multipliers are shown in a panel below the QSO list. Those named explicitly
+in the contest file (`WN`, `O05`, ...) are always listed, with the ones
+already worked highlighted in green. Multipliers given as a pattern such as
+`N[0-9][0-9]` are not listed in advance; each one appears in the panel, in
+green, once it has been worked. With `mult_per = band` the panel shows the
+band the radio is on. The panel follows edits and deletions of QSOs.
+
+The score is your claimed score; the organiser's evaluation is what counts.
+
+## Keys
+
+| Key | Action |
+| --- | --- |
+| Enter | Log the QSO |
+| Tab / Shift-Tab | Next / previous field |
+| Space | Jump from callsign to exchange |
+| Esc | Clear the entry line |
+| `<frequency>` Enter | QSY (`7030.5` = kHz, below 1000 = MHz, e.g. `144.3`) |
+| `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
+| F2 | Export ADIF (`<logfile>.adi`) |
+| F3 | Export Cabrillo (`<CALL>-<date>-1.cbr`) |
+| `\` | Switch to the other entry row (A/B) |
+| PgDn / PgUp | Highlight a DX cluster spot; Enter in an empty call field takes it |
+| F5 | Start an ATU tune cycle on the radio (it transmits a carrier) |
+| F6 | Spot a station on the DX cluster (asks for a comment first) |
+| Up / Down | Edit a logged QSO in the list (see below) |
+| F8 | Delete the last QSO, or the selected one while editing |
+| F10 or Ctrl-X | Quit |
+
+### Editing a QSO
+
+Cursor Up moves an edit cursor into the QSO list; Up and Down move through
+the log, and Down past the last QSO returns to QSO entry. The selected QSO is
+edited in place, cell by cell: time (UTC, `2026-12-01 18:45:00`), callsign,
+frequency (kHz), mode, both reports and both exchanges. Tab and Shift-Tab
+move between the cells.
+
+Enter saves, Esc cancels, F8 deletes the selected QSO. Moving to another QSO
+with Up or Down discards unsaved changes. Whatever is typed in the entry rows
+is left untouched while you edit. The log is kept in time order, so a QSO
+whose time was changed moves to its new place in the list and exports.
+
+Exports also work without the UI:
+
+```
+python3 llog.py wsa wsa-2026-12.db --export-adif out.adi --export-cabrillo out.cbr
+```
+
 ## Exchange
 
 `exchange_sent` in the contest file is a fixed text (for example your DOK) or `#`
