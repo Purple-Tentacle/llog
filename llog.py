@@ -163,40 +163,169 @@ def dupe_rules(cfg):
         sys.exit(f"Bad dupe setting in the contest file: {exc}")
 
 
+class CountryFile:
+    """Callsign -> DXCC country, continent and zones, from a cty.dat file
+    (the "country file" used by most contest loggers, www.country-files.com).
+    """
+    # cty.dat also lists some non-DXCC areas (marked *); their DXCC country
+    WAE = {"*IG9": "I", "*IT9": "I", "*TA1": "TA", "*GM/s": "GM",
+           "*JW/b": "JW", "*4U1V": "OE"}
+    MODIFIERS = {"P", "M", "QRP", "A", "AM", "B", "LH", "PM"}
+
+    def __init__(self, path):
+        self.path = path
+        self.prefixes, self.exact = {}, {}
+        with open(path, encoding="utf-8", errors="replace") as source:
+            text = source.read()
+        for block in text.split(";"):
+            fields = block.strip().split(":", 8)
+            if len(fields) < 9:
+                continue
+            name, cq, itu, cont = (f.strip() for f in fields[:4])
+            prefix = fields[7].strip()
+            base = {"name": name, "cont": cont, "cq": cq.lstrip("0"),
+                    "itu": itu.lstrip("0"),
+                    "prefix": self.WAE.get(prefix, prefix.lstrip("*"))}
+            for alias in fields[8].replace("\n", "").split(","):
+                alias = alias.strip()
+                if not alias:
+                    continue
+                info = dict(base)
+                cq_over = re.search(r"\((\d+)\)", alias)
+                cont_over = re.search(r"\{(\w+)\}", alias)
+                if cq_over:
+                    info["cq"] = cq_over.group(1).lstrip("0")
+                if cont_over:
+                    info["cont"] = cont_over.group(1)
+                alias = re.sub(r"\(.*?\)|\[.*?\]|<.*?>|\{.*?\}|~.*?~", "", alias)
+                if alias.startswith("="):
+                    self.exact[alias[1:].upper()] = info
+                else:
+                    self.prefixes[alias.upper()] = info
+        self.longest = max(map(len, self.prefixes), default=0)
+
+    def lookup(self, call):
+        """Country data for a callsign, or None (unknown, maritime mobile)."""
+        call = call.upper()
+        if call in self.exact:
+            return self.exact[call]
+        parts = [p for p in call.split("/") if p]
+        if "MM" in parts[1:]:
+            return None
+        parts = [p for i, p in enumerate(parts)
+                 if i == 0 or (p not in self.MODIFIERS and not p.isdigit())]
+        # EA8/DL1ABC and DL1ABC/EA8: the shorter part names the country
+        part = min(parts, key=len) if parts else ""
+        for size in range(min(len(part), self.longest), 0, -1):
+            if part[:size] in self.prefixes:
+                return self.prefixes[part[:size]]
+        return None
+
+
+_country_files = {}
+
+
+def load_countries(cfg, needed=False):
+    """The cty.dat named by country_file in config.ini, or else
+    ~/.config/llog/cty.dat or cty.dat next to llog.py if one is there."""
+    named = cfg["station"].get("country_file", "").strip()
+    candidates = [os.path.expanduser(named)] if named else [
+        os.path.join(cfg["station"].get("config_dir", DEFAULT_CONFIG_DIR),
+                     "cty.dat"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "cty.dat")]
+    for path in candidates:
+        if path in _country_files:
+            return _country_files[path]
+        if os.path.exists(path):
+            try:
+                _country_files[path] = CountryFile(path)
+            except OSError as exc:
+                sys.exit(f"country_file {path}: {exc}")
+            return _country_files[path]
+    if named or needed:
+        sys.exit("This contest is scored by country or continent and needs a "
+                 "country file.\nDownload cty.dat from www.country-files.com "
+                 "and save it as " + candidates[0])
+    return None
+
+
+BAND_NAMES = {name.upper() for _, _, name, _ in BANDS}
+RELATIONS = ("SAME", "DX", "OWN")     # same continent / other continent / own country
+
+
 def score_rules(cfg):
-    """points = FM:2, SSB:4, CW:6   multipliers = N[0-9][0-9], WN, ..."""
+    """Scoring settings of the contest file, see README "Scoring"."""
     con = cfg["contest"]
-    points = {}
+    points = []                      # (set of conditions, points)
     try:
-        for item in con.get("points", "").replace(",", " ").split():
-            mode, value = item.split(":")
-            points[mode.upper()] = int(value)
+        for item in con.get("points", "").upper().replace(",", " ").split():
+            conds, value = item.rsplit(":", 1)
+            points.append((frozenset(c for c in conds.split("+") if c != "*"),
+                           int(value)))
     except ValueError:
-        sys.exit("points must look like 'FM:2, SSB:4, CW:6' "
-                 "(mode, PH, DIG or * followed by ':' and a number)")
+        sys.exit("points must look like 'FM:2, SSB:4, CW:6' or "
+                 "'SAME:1, DX:2, 40M+SAME:3, 40M+DX:6'")
     mults = con.get("multipliers", "").upper().replace(",", " ").split()
     per = con.get("mult_per", "band").strip().lower()
     if per not in ("band", "contest"):
         sys.exit("mult_per must be 'band' or 'contest'")
-    return {"configured": bool(points or mults), "points": points or {"*": 1},
-            "mults": mults, "mult_per": per}
+    try:
+        mult_country = con.getboolean("mult_country", False)
+    except ValueError:
+        sys.exit("mult_country must be yes or no")
+    mult_calls = con.get("mult_calls", "").upper().replace(",", " ").split()
+    by_country = (mult_country or bool(mult_calls)
+                  or any(conds & set(RELATIONS) for conds, _ in points))
+    countries = load_countries(cfg, needed=by_country)
+    return {"configured": bool(points or mults or mult_country or mult_calls),
+            "points": points or [(frozenset(), 1)],
+            "mults": mults, "mult_per": per, "mult_country": mult_country,
+            "mult_calls": mult_calls,
+            "has_mults": bool(mults or mult_country or mult_calls),
+            "countries": countries,
+            "home": countries.lookup(cfg["station"]["call"]) if countries else None}
 
 
-def qso_points(rules, mode):
-    table = rules["points"]
-    return table.get(mode, table.get(mode_group(mode), table.get("*", 0)))
+def qso_points(rules, call, mode, freq_hz):
+    """Points of one QSO: the most specific matching entry of 'points'
+    (most conditions; the later one on a tie). No match = 0 points."""
+    facts = {mode, mode_group(mode), band_of(freq_hz or 0).upper()}
+    them = rules["countries"].lookup(call) if rules["countries"] else None
+    if them and rules["home"]:
+        facts.add("SAME" if them["cont"] == rules["home"]["cont"] else "DX")
+        if them["prefix"] == rules["home"]["prefix"]:
+            facts.add("OWN")
+    best, value = -1, 0
+    for conds, pts in rules["points"]:
+        if conds <= facts and len(conds) >= best:
+            best, value = len(conds), pts
+    return value
 
 
 def mult_key(rules, exch, freq_hz):
-    """Multiplier this exchange earns as (band, value), or None. The whole
-    exchange is tried first, then each word of it, so '001 N13' counts as
-    the multiplier N13."""
+    """Multiplier the received exchange earns as (band, value), or None. The
+    whole exchange is tried first, then each word of it, so '001 N13' counts
+    as the multiplier N13."""
     text = (exch or "").strip().upper()
     for value in [text] + text.split():
         if value and any(fnmatch.fnmatchcase(value, pat) for pat in rules["mults"]):
             band = band_of(freq_hz or 0) if rules["mult_per"] == "band" else ""
             return (band, value)
     return None
+
+
+def qso_mults(rules, call, exch, freq_hz):
+    """All multipliers one QSO can earn, as (band, value) keys: from the
+    exchange, its DXCC country (mult_country) and the station itself if it
+    is in one of the mult_calls countries."""
+    band = band_of(freq_hz or 0) if rules["mult_per"] == "band" else ""
+    keys = [mult_key(rules, exch, freq_hz)]
+    them = rules["countries"].lookup(call) if rules["countries"] else None
+    if them and rules["mult_country"]:
+        keys.append((band, them["prefix"]))
+    if them and them["prefix"].upper() in rules["mult_calls"]:
+        keys.append((band, base_call(call)))
+    return [k for k in keys if k]
 
 
 def compute_score(rows, dupes, rules):
@@ -225,17 +354,16 @@ def compute_score(rows, dupes, rules):
             per_qso[q["id"]] = (0, True, False)
             continue
         worked[key] = when
-        points = qso_points(rules, q["mode"])
-        mult = mult_key(rules, q["exch_r"], q["freq_hz"])
-        new_mult = mult is not None and mult not in mults
-        if new_mult:
-            mults.add(mult)
-            stat["mults"] += 1
+        points = qso_points(rules, q["call"], q["mode"], q["freq_hz"])
+        new = set(qso_mults(rules, q["call"], q["exch_r"], q["freq_hz"])) - mults
+        mults |= new
+        stat["mults"] += len(new)
         stat["points"] += points
-        per_qso[q["id"]] = (points, False, new_mult)
+        per_qso[q["id"]] = (points, False, bool(new))
     total_points = sum(b["points"] for b in bands.values())
     return {"points": total_points, "mults": len(mults), "seen": mults,
-            "score": total_points * len(mults) if rules["mults"] else total_points,
+            "score": total_points * len(mults) if rules["has_mults"]
+            else total_points,
             "per_qso": per_qso, "bands": bands}
 
 
@@ -244,7 +372,7 @@ def score_report(result, rules):
     for band, b in result["bands"].items():
         lines.append(f"{band or '?':<6}{b['qsos']:>6}{b['dupes']:>7}"
                      f"{b['points']:>8}{b['mults']:>7}")
-    if rules["mults"]:
+    if rules["has_mults"]:
         lines.append(f"Score: {result['points']} points x {result['mults']} "
                      f"multipliers = {result['score']}")
     else:
@@ -849,6 +977,10 @@ class Log:
         lines = ["START-OF-LOG: 3.0", f"CONTEST: {cab.get('contest', '')}",
                  f"CALLSIGN: {mycall}",
                  f"CATEGORY-OPERATOR: {cab.get('category_operator', 'SINGLE-OP')}"]
+        for key in ("band", "mode", "power"):
+            if cab.get("category_" + key, "").strip():
+                lines.append(f"CATEGORY-{key.upper()}: "
+                             f"{cab['category_' + key].strip().upper()}")
         rules = score_rules(cfg)
         if rules["configured"]:
             result = compute_score(self.rows(), dupe_rules(cfg), rules)
@@ -905,7 +1037,8 @@ def list_contests(config_dir):
 def load_config(config_dir, contest):
     """Station data from config.ini, contest data from contests/<name>.ini."""
     cfg = configparser.ConfigParser()
-    cfg.read_dict({"station": {"call": "", "email": "", "worked_before": ""},
+    cfg.read_dict({"station": {"call": "", "email": "", "worked_before": "",
+                               "country_file": ""},
                    "qrz": {"username": "", "password": ""},
                    "rig": {"host": "127.0.0.1", "port": "4532",
                            "vfo_switch": "retune", "tune_command": "auto"},
@@ -920,7 +1053,10 @@ def load_config(config_dir, contest):
                                "dupe_minutes": "0",
                                "points": "", "multipliers": "",
                                "mult_per": "band", "locator": "",
-                               "serial_start": "1", "worked_before": ""}})
+                               "serial_start": "1", "worked_before": "",
+                               "mult_country": "no", "mult_calls": "",
+                               "mode": "", "category_band": "",
+                               "category_mode": "", "category_power": ""}})
     station_file = os.path.join(config_dir, "config.ini")
     if os.path.exists(station_file):
         cfg.read(station_file)
@@ -972,6 +1108,7 @@ def load_config(config_dir, contest):
               "mult_per) can be edited in that file.\n")
     if not cfg["contest"]["email"]:
         cfg["contest"]["email"] = cfg["station"].get("email", "")
+    cfg["station"]["config_dir"] = config_dir      # not saved; for cty.dat
     return cfg
 
 
@@ -1031,6 +1168,7 @@ class App:
                                cfg["cluster"].getint("minutes"))
         # one entry row per VFO
         self.my_loc = my_locator(cfg)
+        self.forced_mode = cfg["contest"].get("mode", "").strip().upper()
         self.history = load_history(cfg)
         self.entry = {v: self.new_entry() for v in "AB"}
         self.row = "A"
@@ -1075,6 +1213,8 @@ class App:
 
     def mode(self, row=None):
         row = row or self.row
+        if self.forced_mode:             # 'mode = RTTY' in the contest file
+            return self.forced_mode
         if self.rig.online and self.rig.mode[row]:
             return RIG_MODES.get(self.rig.mode[row], self.rig.mode[row])
         return self.manual_mode[row]
@@ -1144,11 +1284,13 @@ class App:
         return self._score[1]
 
     def new_mult(self):
-        """Multiplier value if the exchange being typed is a new one."""
+        """The new multipliers the station being entered would give, as text."""
         if self.edit or not is_call(self.val["call"]):
             return None
-        key = mult_key(self.scoring, self.val["exch"], self.freq())
-        return key[1] if key and key not in self.score()["seen"] else None
+        keys = qso_mults(self.scoring, self.val["call"], self.val["exch"],
+                         self.freq())
+        new = [key[1] for key in keys if key not in self.score()["seen"]]
+        return ", ".join(new) or None
 
     @staticmethod
     def dupe_text(q):
@@ -1442,7 +1584,7 @@ class App:
     def mult_panel(self, width):
         """Rows of (text, worked): every multiplier named in the contest file,
         then worked ones that matched a pattern such as N[0-9][0-9]."""
-        if not self.scoring["mults"]:
+        if not self.scoring["has_mults"]:
             return []
         names = [m for m in self.scoring["mults"]
                  if not any(c in m for c in "*?[")]
@@ -1627,7 +1769,7 @@ class App:
         if not self.scoring["configured"]:
             return ""
         r = self.score()
-        if self.scoring["mults"]:
+        if self.scoring["has_mults"]:
             return f"Score: {r['points']}x{r['mults']}={r['score']} | "
         return f"Score: {r['score']} | "
 
@@ -1759,6 +1901,11 @@ class App:
         km = distance_km(self.my_loc, loc)
         if km is not None:
             line += f"   [{loc}: {km} km]"
+        land = (self.scoring["countries"].lookup(call)
+                if self.scoring["countries"] and is_call(call) else None)
+        if land:
+            line += (f"   [{land['prefix']} {land['name']}, {land['cont']}, "
+                     f"CQ zone {land['cq']}]")
         put(h - 8, 1, line, curses.A_BOLD)
         dupe = self.dupe()
         if dupe:

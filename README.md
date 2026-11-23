@@ -269,9 +269,28 @@ Scoring is set in the contest file as well:
 
 | Option | Example | Meaning |
 | --- | --- | --- |
-| `points` | `FM:2, SSB:4, CW:6` | QSO points per mode. Keys are a mode (`CW`, `SSB`, `FM`, `AM`, `RTTY`), a mode class (`PH`, `DIG`) or `*` for everything else. Modes without an entry score 0. Empty = 1 point per QSO. |
-| `multipliers` | `N[0-9][0-9], WN, DVN` | Received exchanges that count as a multiplier. If the exchange has several words (`001 N13`), each word is checked. Entries are exact values or patterns (`?` one character, `*` any text, `[0-9]` one digit). `*` alone makes every different exchange a multiplier. Empty = no multipliers. |
+| `points` | `FM:2, SSB:4, CW:6` | QSO points, see below. Empty = 1 point per QSO. |
+| `multipliers` | `N[0-9][0-9], WN, DVN` | Received exchanges that count as a multiplier. If the exchange has several words (`001 N13`), each word is checked. Entries are exact values or patterns (`?` one character, `*` any text, `[0-9]` one digit). `*` alone makes every different exchange a multiplier. |
+| `mult_country` | `yes` | Every DXCC country counts as a multiplier |
+| `mult_calls` | `OK` | Every station from the listed countries (by their main prefix) counts as a multiplier of its own |
 | `mult_per` | `band` (default) or `contest` | Whether a multiplier counts once per band or once in the whole contest |
+
+**Points.** Each entry is `condition:points`, and conditions can be combined
+with `+`:
+
+| Condition | Matches |
+| --- | --- |
+| `CW`, `SSB`, `FM`, `AM`, `RTTY` | the mode |
+| `PH`, `DIG` | any phone mode, any digital mode |
+| `80M`, `40M`, `2M`, `70CM`, ... | the band |
+| `SAME` | station on your own continent |
+| `DX` | station on another continent |
+| `OWN` | station in your own country |
+| `*` | everything |
+
+For each QSO the entry with the most matching conditions wins, so
+`SAME:1, DX:2, 40M+SAME:3, 40M+DX:6` gives 1 or 2 points in general and 3 or
+6 on 40 m. A QSO that matches no entry scores 0.
 
 The score is the sum of QSO points times the number of multipliers, or just
 the points when no multipliers are configured. Dupes (according to the dupe
@@ -279,24 +298,41 @@ rules) get no points and no multiplier.
 
 With scoring configured, llog shows the score in the header, the points of
 each QSO in the list (`+M` marks a new multiplier), a green `NEW MULTIPLIER`
-line while you type an exchange that is new on the band, and writes
-`CLAIMED-SCORE` into the Cabrillo file. `python3 llog.py wsa wsa.db --score`
-prints the score per band.
-
-Ready-made contest files for WNA and WSA are in `examples/`. Copy them to
-`~/.config/llog/contests/` and enter your DOK:
-
-```
-mkdir -p ~/.config/llog/contests
-cp examples/wna.ini examples/wsa.ini ~/.config/llog/contests/
-```
+line while you enter a station that brings one, and writes `CLAIMED-SCORE`
+into the Cabrillo file. `python3 llog.py wsa wsa.db --score` prints the score
+per band.
 
 Multipliers are shown in a panel below the QSO list. Those named explicitly
 in the contest file (`WN`, `O05`, ...) are always listed, with the ones
-already worked highlighted in green. Multipliers given as a pattern such as
-`N[0-9][0-9]` are not listed in advance; each one appears in the panel, in
-green, once it has been worked. With `mult_per = band` the panel shows the
-band the radio is on. The panel follows edits and deletions of QSOs.
+already worked highlighted in green. All other multipliers (patterns such as
+`N[0-9][0-9]`, countries, stations) appear in the panel, in green, once they
+have been worked. With `mult_per = band` the panel shows the band the radio
+is on. The panel follows edits and deletions of QSOs.
+
+**Country file.** `SAME`, `DX`, `OWN`, `mult_country` and `mult_calls` need to
+know the country and continent of a callsign. llog takes that from a
+`cty.dat` country file, the same file other contest loggers use. Download it
+from www.country-files.com and save it as `~/.config/llog/cty.dat` (or set
+`country_file = /path/to/cty.dat` in the `[station]` section of `config.ini`).
+With a country file present, the QRZ line also shows country, continent and
+CQ zone of the callsign being entered. Portable calls are resolved by their
+prefix (`EA8/DL1ABC` is Canary Islands); `/MM` has no country.
+
+**Other contest file options**
+
+| Option | Example | Meaning |
+| --- | --- | --- |
+| `mode` | `RTTY` | Log every QSO with this mode, whatever the radio reports (useful when the radio is in a generic data mode) |
+| `category_band`, `category_mode`, `category_power` | `ALL`, `RTTY`, `LOW` | Written as `CATEGORY-BAND` etc. into the Cabrillo header |
+
+Ready-made contest files are in `examples/`: `wna.ini`, `wsa.ini` and
+`ok-dx-rtty.ini`. Copy them to `~/.config/llog/contests/` and adjust the
+marked lines:
+
+```
+mkdir -p ~/.config/llog/contests
+cp examples/*.ini ~/.config/llog/contests/
+```
 
 The score is your claimed score; the organiser's evaluation is what counts.
 

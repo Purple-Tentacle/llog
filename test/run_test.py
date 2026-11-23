@@ -266,6 +266,58 @@ assert hist.text(hist.lookup("W1AW")) == "Worked before: 1 QSO, last 2024-01-01 
 assert hist.lookup("DL1XYZ") is None and not m.CallHistory("").calls
 c5 = m.load_config(work, "wsa"); c5["station"]["worked_before"] = adi
 assert m.load_history(c5).lookup("DK2NI")
+# country file, continent points, country and station multipliers (OK DX RTTY)
+open(os.path.join(work, "cty.dat"), "w").write("""Fed. Rep. of Germany:      14:  28:  EU:   51.00:   -10.00:    -1.0:  DL:
+    DA,DB,DC,DD,DE,DF,DG,DH,DI,DJ,DK,DL,DM,DN,DO,DP,DQ,DR,Y2;
+Czech Republic:            15:  28:  EU:   50.00:   -16.00:    -1.0:  OK:
+    OK,OL;
+United States:             05:  08:  NA:   37.53:    91.67:     5.0:  K:
+    AA,AB,K,N,W,=W1AW(5)[8],K7(3)[6],KH6(31)[61]<21.12/157.48>{OC}~10.0~;
+Canary Islands:            33:  36:  AF:   28.32:    15.85:     0.0:  EA8:
+    EA8,EH8;
+Spain:                     14:  37:  EU:   40.37:     4.88:    -1.0:  EA:
+    EA,EH;
+African Italy:             33:  37:  AF:   35.67:   -12.67:    -1.0:  *IG9:
+    IG9,IH9;
+""")
+cty = m.CountryFile(os.path.join(work, "cty.dat"))
+look = lambda c: (lambda i: i and (i["prefix"], i["cont"], i["cq"]))(cty.lookup(c))
+assert look("DA2IT") == ("DL", "EU", "14") and look("OL5Y") == ("OK", "EU", "15")
+assert look("K7ABC") == ("K", "NA", "3") and look("KH6XX") == ("K", "OC", "31")
+assert look("W1AW") == ("K", "NA", "5") and look("EA8/DL1XYZ") == ("EA8", "AF", "33")
+assert look("DL1XYZ/EA8") == ("EA8", "AF", "33") and look("DL1ABC/P") == ("DL", "EU", "14")
+assert look("EA3ABC/7") == ("EA", "EU", "14") and look("IG9ABC") == ("I", "AF", "33")
+assert look("DL1ABC/MM") is None and look("ZZ9ZZ") is None
+c6 = m.load_config(work, os.path.join(EX, "ok-dx-rtty.ini"))
+dr6, sr6 = m.dupe_rules(c6), m.score_rules(c6)
+assert sr6["home"]["prefix"] == "DL" and sr6["has_mults"]
+def rtty(*qsos):
+    return [dict(id=i, ts=f"2026-12-19 10:{i:02d}:00", call=c, freq_hz=f, mode="RTTY",
+                 exch_r=e) for i, (c, f, e) in enumerate(qsos, 1)]
+r = m.compute_score(rtty(("OK1AAA", 14085000, "15"),      # 1 pt, mults OK + OK1AAA
+                         ("OK1AAA", 3585000, "15"),       # 3 pt, mults OK + OK1AAA on 80m
+                         ("K1ABC", 14086000, "05"),       # 2 pt (DX), mult K
+                         ("K1ABC", 7045000, "05"),        # 6 pt, mult K on 40m
+                         ("DL1ABC", 14087000, "14"),      # 1 pt, mult DL
+                         ("OL5Y", 14088000, "15"),        # 1 pt, mult OL5Y (OK already)
+                         ("EA8/DL1XYZ", 21085000, "33"),  # 2 pt (Africa), mult EA8
+                         ("K1ABC", 14086000, "05"),       # dupe
+                         ("ZZ9ZZ", 14089000, "99")),      # unknown country: 0 pt
+                    dr6, sr6)
+assert (r["points"], r["mults"], r["score"]) == (16, 9, 144), r
+assert r["per_qso"][6] == (1, False, True) and r["per_qso"][8] == (0, True, False)
+assert m.qso_mults(sr6, "OK2BBB", "15", 14085000) == [("20m", "OK"), ("20m", "OK2BBB")]
+app6 = m.App(c6, m.Log(os.path.join(work, "ok.db")))
+app6.manual_freq["A"] = 14085000; app6.manual_mode["A"] = "SSB"
+assert app6.mode() == "RTTY" and app6.default_rst() == "599"     # mode = RTTY forces it
+app6.val["call"] = "OK2BBB"; assert app6.new_mult() == "OK, OK2BBB"
+app6.val["exch"] = "15"; app6.enter()
+cab6 = os.path.join(work, "ok.cbr"); app6.log.export_cabrillo(cab6, c6); cab6 = open(cab6).read()
+assert "CONTEST: OK-DX-RTTY" in cab6 and "CATEGORY-BAND: ALL" in cab6
+assert "CATEGORY-POWER: LOW" in cab6 and "CATEGORY-MODE: RTTY" in cab6
+assert "CLAIMED-SCORE: 2" in cab6 and "QSO: 14085 RY " in cab6 and " 599 14 " in cab6
+# old style points still work, and no country file is needed for them
+assert m.qso_points(m.score_rules(m.load_config(work, "wsa")), "DL1A", "FM", 144300000) == 2
 # running number in the sent exchange
 assert m.next_exchange("N99", ["N99"]) == "N99"
 assert m.next_exchange("#", []) == "001" and m.next_exchange("#", [], start=100) == "100"
@@ -326,7 +378,7 @@ assert not d(R(exchange=True), exch="N02")                   # moved: new exchan
 assert d(R(minutes=30)) and not d(R(minutes=15))             # 20 minutes ago
 # scoring with the shipped example files
 def rules_for(name):
-    c = configparser.ConfigParser(); c.read(os.path.join(EX, name))
+    c = m.load_config(work, os.path.join(EX, name))
     return m.dupe_rules(c), m.score_rules(c)
 def rows(*qsos):
     return [dict(id=i, ts=f"2026-12-01 18:{i:02d}:00", call=c, freq_hz=f, mode=mo,
@@ -374,7 +426,7 @@ cl.feed(f"  14010.0  W1AW        {now_utc:%d-%b-%Y %H%M}Z  sh/dx line           
 cl.feed("  14011.0  W2OLD       01-Jan-2020 1200Z  long gone                  <DL4DDD>")
 assert {x["call"] for x in cl.spots("20m")} == {"W1AW", "K9XX"}   # W2OLD expired
 app = m.App.__new__(m.App)                      # panel logic without a terminal
-c = configparser.ConfigParser(); c.read(os.path.join(EX, "wna.ini"))
+c = m.load_config(work, os.path.join(EX, "wna.ini"))
 app.scoring = m.score_rules(c); app.freq = lambda: V
 app.score = lambda: {"seen": {("2m", "WN"), ("70cm", "DVN"), ("2m", "N01")}}
 panel = app.mult_panel(30)
