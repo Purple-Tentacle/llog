@@ -721,7 +721,27 @@ class Log:
             freq_hz INTEGER, mode TEXT, rst_s TEXT, rst_r TEXT,
             exch_s TEXT, exch_r TEXT, name TEXT, qth TEXT, grid TEXT,
             country TEXT)""")
+        # stations noted on a frequency to come back to later
+        self.db.execute("""CREATE TABLE IF NOT EXISTS later (
+            call TEXT, band TEXT, freq_hz INTEGER, mode TEXT, seen REAL,
+            PRIMARY KEY (call, band))""")
         self.db.commit()
+
+    def store_later(self, call, freq_hz, mode):
+        self.db.execute("INSERT OR REPLACE INTO later VALUES (?,?,?,?,?)",
+                        (call, band_of(freq_hz), freq_hz, mode, time.time()))
+        self.db.commit()
+
+    def later_rows(self, band):
+        found = self.db.execute("SELECT call, freq_hz, mode, seen FROM later "
+                                "WHERE band=?", (band,))
+        return [dict(zip(("call", "freq_hz", "mode", "seen"), r)) for r in found]
+
+    def delete_later(self, call, band):
+        done = self.db.execute("DELETE FROM later WHERE call=? AND band=?",
+                               (call, band)).rowcount
+        self.db.commit()
+        return done
 
     COLS = ("ts", "mycall", "call", "freq_hz", "mode", "rst_s", "rst_r",
             "exch_s", "exch_r", "name", "qth", "grid", "country")
@@ -1013,7 +1033,8 @@ class App:
         self.row = "A"
         self.manual_freq = {"A": 0, "B": 0}
         self.manual_mode = {"A": "SSB", "B": "SSB"}
-        self.spot = ""        # callsign of the highlighted cluster spot
+        self.spot = ""        # callsign of the highlighted panel entry
+        self.view = "newest"  # panel view: "newest" or "map" (band map)
         self.prompt = None    # question on the message line: text, value, action
         self.edit = None      # QSO being edited in the list, or None
         self.eval = {}        # its cell texts while editing
@@ -1186,6 +1207,7 @@ class App:
                 exch_s=self.exch_sent(), exch_r=self.val["exch"].strip(),
                 name=info.get("name", ""), qth=info.get("qth", ""),
                 grid=self.val["loc"], country=info.get("country", ""))
+            self.log.delete_later(call, band_of(self.freq()))   # no longer "later"
             self.msg = f"Logged {call} in row {self.row}"
             self.clear()
 
@@ -1299,7 +1321,9 @@ class App:
 
     def entry_key(self, ch):
         name = FIELDS[self.focus]
-        if ch in ("\n", "\r", curses.KEY_ENTER):
+        if ch == "\n":         # Ctrl-J, and Ctrl-Enter where the terminal sends it
+            self.store_for_later()
+        elif ch in ("\r", curses.KEY_ENTER):
             self.enter()
         elif ch == "\\":
             self.switch_row()
@@ -1347,6 +1371,12 @@ class App:
                 self.msg = "Rig offline - cannot start ATU tune."
         elif ch == curses.KEY_F6:
             self.spot_send()
+        elif ch == curses.KEY_F7:
+            self.toggle_view()
+        elif ch == curses.KEY_F9:
+            self.store_for_later()
+        elif ch == curses.KEY_DC:
+            self.spot_delete()
         elif ch == curses.KEY_NPAGE:
             self.spot_step(+1)
         elif ch == curses.KEY_PPAGE:
@@ -1407,33 +1437,99 @@ class App:
         rows.append(row)
         return rows
 
-    def cluster_rows(self):
-        """Spots on the band of the current row, newest first, with a
-        'worked' flag (dupe by the contest rules) and the panel text."""
-        spots = self.cluster.spots(band_of(self.freq() or 0))
+    def panel_rows(self):
+        """Entries of the right-hand panel for the band of the current row.
+
+        'newest' view: cluster spots and stored stations, newest first.
+        'map' view: the same plus the stations in the log, by frequency,
+        with a marker line for the current frequency (kind 'here').
+        """
+        here = self.freq() or 0
+        band = band_of(here)
+        entries = {}
+        if self.view == "map":
+            for q in self.log.rows():
+                if band and band_of(q["freq_hz"] or 0) == band:
+                    entries[q["call"]] = {
+                        "call": q["call"], "freq_hz": q["freq_hz"],
+                        "time": q["ts"][11:13] + q["ts"][14:16],
+                        "comment": "worked", "kind": "worked", "seen": 0}
+        for spot in self.cluster.spots(band):
+            entries[spot["call"]] = dict(spot, kind="spot")
+        for st in self.log.later_rows(band):
+            stamp = datetime.fromtimestamp(st["seen"], timezone.utc)
+            entries[st["call"]] = dict(st, kind="stored", comment="stored",
+                                       time=stamp.strftime("%H%M"))
+        rows = list(entries.values())
+        for row in rows:
+            row["worked"] = row["kind"] == "worked" or bool(self.log.find_dupe(
+                self.rules, row["call"], row["freq_hz"], self.mode()))
+        if self.view == "map":
+            rows.sort(key=lambda r: (r["freq_hz"], r["call"]))
+            if here:
+                at = sum(r["freq_hz"] < here for r in rows)
+                rows.insert(at, {"kind": "here", "call": "", "freq_hz": here,
+                                 "time": "", "comment": f"<<< row {self.row}",
+                                 "worked": False})
+        else:
+            rows.sort(key=lambda r: r["seen"], reverse=True)
         # frequencies right-aligned among themselves, flush with the header
-        width = max((len(f"{s['freq_hz'] / 1000:.1f}") for s in spots), default=0)
-        rows = []
-        for spot in spots:
-            worked = self.log.find_dupe(self.rules, spot["call"],
-                                        spot["freq_hz"], self.mode())
-            rows.append(dict(spot, worked=bool(worked), text=(
-                f"{spot['freq_hz'] / 1000:>{width}.1f} {spot['call']:<12} "
-                f"{spot['time']} {spot['comment']}").rstrip()))
+        width = max((len(f"{r['freq_hz'] / 1000:.1f}") for r in rows), default=0)
+        for row in rows:
+            flag = {"stored": "*", "here": ">"}.get(row["kind"], " ")
+            row["text"] = (f"{flag}{row['freq_hz'] / 1000:>{width}.1f} "
+                           f"{row['call']:<12} {row['time']:<4} "
+                           f"{row['comment']}").rstrip()
         return rows
 
     def spot_step(self, step):
-        """PgDn/PgUp: move the highlight through the cluster spots."""
-        calls = [spot["call"] for spot in self.cluster_rows()]
+        """PgDn/PgUp: move the highlight through the panel. In the band map
+        the first step starts from the current frequency."""
+        rows = [r for r in self.panel_rows() if r["kind"] != "here"]
+        calls = [r["call"] for r in rows]
         if not calls:
-            self.msg = "No cluster spots on this band."
-        elif self.spot not in calls:
-            self.spot = calls[0]
-        else:
-            self.spot = calls[min(max(calls.index(self.spot) + step, 0),
-                                  len(calls) - 1)]
+            self.msg = "Nothing in the panel on this band."
+            return
         if self.spot in calls:
-            self.msg = f"Spot {self.spot} - Enter in an empty call field takes it."
+            index = min(max(calls.index(self.spot) + step, 0), len(calls) - 1)
+        elif self.view == "map":
+            here = self.freq() or 0
+            above = [i for i, r in enumerate(rows) if r["freq_hz"] > here]
+            below = [i for i, r in enumerate(rows) if r["freq_hz"] < here]
+            index = (above[0] if above else len(rows) - 1) if step > 0 \
+                else (below[-1] if below else 0)
+        else:
+            index = 0
+        self.spot = calls[index]
+        self.msg = (f"{self.spot} - Enter in an empty call field takes it"
+                    + (", Del removes it." if rows[index]["kind"] == "stored"
+                       else "."))
+
+    def store_for_later(self):
+        """F9 / Ctrl-J: note the station in the call field on the current
+        frequency, to come back to it later."""
+        call = self.val["call"]
+        if not is_call(call):
+            self.msg = "Type the callsign to store first."
+        elif not band_of(self.freq() or 0):
+            self.msg = "No amateur band frequency - cannot store."
+        else:
+            self.log.store_later(call, self.freq(), self.mode())
+            self.msg = (f"Stored {call} on {fmt_freq(self.freq())} for later "
+                        "(shown with * in the panel).")
+            self.clear()
+
+    def spot_delete(self):
+        band = band_of(self.freq() or 0)
+        if self.spot and self.log.delete_later(self.spot, band):
+            self.msg, self.spot = f"Removed stored station {self.spot}.", ""
+        else:
+            self.msg = "Del removes a highlighted stored station (marked *)."
+
+    def toggle_view(self):
+        self.view = "map" if self.view == "newest" else "newest"
+        self.msg = ("Band map: by frequency, with worked stations."
+                    if self.view == "map" else "Panel: newest first.")
 
     def spot_send(self):
         """F6: spot the station in the call field, or else the last QSO."""
@@ -1474,10 +1570,13 @@ class App:
             prompt["value"] += ch
 
     def spot_take(self):
-        """Tune the current row to the highlighted spot and fill in its call."""
-        for spot in self.cluster_rows():
-            if spot["call"] == self.spot:
+        """Tune the current row to the highlighted entry and fill in its call."""
+        for spot in self.panel_rows():
+            if spot["kind"] != "here" and spot["call"] == self.spot:
                 self.set_freq(spot["freq_hz"])
+                if (spot["kind"] == "stored" and spot["mode"] in TYPED_MODES
+                        and spot["mode"] != self.mode()):
+                    self.set_mode(spot["mode"])
                 self.val["call"] = spot["call"]
                 self.qrz.request(spot["call"])
                 self.msg = (f"Row {self.row}: {spot['call']} on "
@@ -1530,7 +1629,7 @@ class App:
         # it takes the space right of the list columns, up to 60 columns, so
         # that spot comments fit; what is left beyond that goes to the names
         panel_w = min(w - 112, 60)
-        panel_x = w - panel_w if self.cluster.host and w >= 142 else None
+        panel_x = w - panel_w if w >= 142 else None
         head = (f"{'#':>4} " + " ".join(f"{title:<{width}}"
                                          for _, width, title in COLUMNS)
                 + f" {'km':>5} {'Pts':<6}")
@@ -1538,22 +1637,33 @@ class App:
             head += "Name"
         put(2, 1, head, curses.A_BOLD)
         if panel_x:
-            put(2, panel_x, f"DX cluster {band_of(self.freq() or 0) or '?'}",
+            band = band_of(self.freq() or 0) or "?"
+            # rows start with a one-character flag column, hence the +1
+            put(2, panel_x + 1, f"Band map {band} (F7: newest first)"
+                if self.view == "map" else f"Newest {band} (F7: band map)",
                 curses.A_BOLD)
-            spots = self.cluster_rows()
+            spots = self.panel_rows()
             line = 3
-            if self.cluster.status != "connected":
-                put(line, panel_x, self.cluster.status[:panel_w - 2])
+            if self.cluster.host and self.cluster.status != "connected":
+                put(line, panel_x + 1,
+                    f"cluster {self.cluster.status}"[:panel_w - 3])
                 line += 1
             elif not spots:
-                put(line, panel_x, "no spots on this band yet")
+                put(line, panel_x + 1, "nothing on this band yet")
+            room = space - (line - 3)
             calls = [spot["call"] for spot in spots]
-            first = 0                    # keep the highlighted spot in view
-            if self.spot in calls:
-                first = max(calls.index(self.spot) - (space - (line - 3)) + 1, 0)
-            for spot in spots[first:first + space - (line - 3)]:
-                attr = curses.A_REVERSE if spot["call"] == self.spot else (
-                    curses.A_DIM if spot["worked"] else 0)
+            kinds = [spot["kind"] for spot in spots]
+            first = 0
+            if self.spot and self.spot in calls:    # keep the highlight in view
+                first = max(calls.index(self.spot) - room + 1, 0)
+            elif "here" in kinds:                   # else centre on our frequency
+                first = max(min(kinds.index("here") - room // 2,
+                                len(spots) - room), 0)
+            for spot in spots[first:first + room]:
+                attr = (curses.A_BOLD if spot["kind"] == "here" else
+                        curses.A_REVERSE if spot["call"] == self.spot else
+                        curses.A_DIM if spot["worked"] else
+                        curses.A_BOLD if spot["kind"] == "stored" else 0)
                 put(line, panel_x, spot["text"][:panel_w - 2], attr)
                 line += 1
         per_qso = self.score()["per_qso"]
@@ -1652,7 +1762,7 @@ class App:
         else:
             put(h - 2, 1, self.msg)
         put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
-                      "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn spot | F5 ATU | F6 spot | F2 ADIF | "
+                      "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn panel | F5 ATU | F6 spot | F7 map | F9 store | F2 ADIF | "
                       "F3 Cabrillo | F8 delete | F10 quit ".ljust(w - 1),
             curses.A_REVERSE)
         try:
@@ -1671,6 +1781,7 @@ class App:
             self.warn_attr = curses.color_pair(1)
             curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_GREEN)
             self.good_attr = curses.color_pair(2)
+        curses.nonl()        # Enter arrives as CR, so Ctrl-J (LF) is its own key
         curses.curs_set(1)
         scr.keypad(True)
         scr.timeout(200)

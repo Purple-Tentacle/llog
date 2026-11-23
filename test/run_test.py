@@ -140,6 +140,8 @@ send("\r", 1.2); send("\r")                                   # take it (QSY + c
 send("\x1b[17~"); send("\x1b")                                # F6: spot last QSO, cancel
 send("\x1b[17~"); send("tnx Qso\r", 1.2)                       # F6 again, comment, send
 assert b"you are not registered" in screen and b"dxspider >" not in screen
+send("dl8zz\n"); send("dl8yy"); send("\x1b[20~")               # Ctrl-J and F9: store for later
+send("\x1b[18~")                                              # F7: band map
 send("\x1b[15~", 1.5)                                         # F5: ATU tune
 send("\x1bOQ"); send("\x1bOR")                            # F2, F3 exports
 send("\x1b[21~", 1.0)                                         # F10 quit
@@ -154,6 +156,8 @@ assert rows == [("DL1ABC", 14060000, "CW", "599", "599", "N99", "O05"),
                 ("DK3AA", 7030500, "SSB", "59", "59", "N99", ""),
                 ("DJ5ZZ", 7012000, "SSB", "59", "59", "N99", "")], rows
 assert "F 7012000" in state["cmds"]
+assert sorted(sqlite3.connect(db).execute("SELECT call, freq_hz FROM later").fetchall()) == \
+    [("DL8YY", 7012000), ("DL8ZZ", 7012000)]
 assert state["cluster_rx"].count(b"DX ") == 1, state["cluster_rx"]
 assert b"DX 7012.0 DJ5ZZ tnx Qso\r\n" in state["cluster_rx"]
 # default vfo_switch = retune: no VFO select, row A is retuned when coming back
@@ -202,7 +206,34 @@ rig.select("B"); time.sleep(1); assert "V VFOB" in vstate["cmds"]
 app3 = m.App(m.load_config(work, "wsa"), m.Log(os.path.join(work, "c.db")))
 app3.manual_freq["A"] = 14060000
 app3.cluster.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
-assert app3.cluster_rows()[0]["text"] == "14025.0 K1ABC        2153 CQ TEST"   # no indent
+assert app3.panel_rows()[0]["text"] == " 14025.0 K1ABC        2153 CQ TEST"
+# band map: spots, stored and worked stations by frequency, with our position
+app3.cluster.feed("DX de DL1AAA:     14010.0  W1AW         cq                             2154Z")
+app3.cluster.feed("DX de DL1AAA:      7010.0  DK9ZZ        other band                     2154Z")
+app3.log.add(ts="2026-12-01 18:10:00", mycall="DA2IT", call="DL1WKD", freq_hz=14040000,
+             mode="SSB", rst_s="59", rst_r="59", exch_s="N99", exch_r="N01")
+app3.log.add(ts="2026-12-01 18:11:00", mycall="DA2IT", call="W1AW", freq_hz=14010500,
+             mode="SSB", rst_s="59", rst_r="59", exch_s="N99", exch_r="")
+app3.val["call"] = "DL8ZZ"; app3.manual_freq["A"] = 14050000; app3.store_for_later()
+assert app3.val["call"] == "" and app3.log.later_rows("20m")[0]["call"] == "DL8ZZ"
+app3.manual_freq["A"] = 14030000
+view = lambda: [(r["kind"], r["call"], r["worked"]) for r in app3.panel_rows()]
+assert view() == [("stored", "DL8ZZ", False), ("spot", "W1AW", True), ("spot", "K1ABC", False)]
+app3.toggle_view()
+assert view() == [("spot", "W1AW", True), ("spot", "K1ABC", False), ("here", "", False),
+                  ("worked", "DL1WKD", True), ("stored", "DL8ZZ", False)], view()
+assert app3.panel_rows()[4]["text"].startswith("*14050.0 DL8ZZ") and \
+    app3.panel_rows()[2]["text"].startswith(">14030.0")
+app3.spot_step(+1); assert app3.spot == "DL1WKD"            # next above our frequency
+app3.spot_step(+1); assert app3.spot == "DL8ZZ"
+app3.spot = ""; app3.spot_step(-1); assert app3.spot == "K1ABC"   # next below
+app3.spot = "DL8ZZ"; assert app3.spot_take() and app3.val["call"] == "DL8ZZ"
+assert app3.manual_freq["A"] == 14050000
+app3.enter()                                                 # logging removes "stored"
+assert not app3.log.later_rows("20m") and app3.log.count() == 3
+app3.val["call"] = "DL7YY"; app3.store_for_later(); app3.spot = "DL7YY"
+app3.spot_delete(); assert not app3.log.later_rows("20m")
+app3.toggle_view(); assert app3.view == "newest"
 # a multiplier inside a longer exchange ("001 N13")
 mr = {"mults": ["N[0-9][0-9]", "DVN"], "mult_per": "band"}
 F2M = 144300000
@@ -315,7 +346,8 @@ assert "CLAIMED-SCORE: 44" in open(os.path.join(work, "DA2IT-" +
 import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
 assert b"Mults" in txt and b"NOTO" in txt and b"O55" in txt
-assert b"DX cluster" in txt and b"K1ABC" in txt and b"2153 CQ TEST" in txt and state["cluster_login"].startswith(b"DA2IT-1\r\n")
+assert b"Newest" in txt and b"K1ABC" in txt and b"2153 CQ TEST" in txt
+assert b"Band map 40m" in txt and b"*7012.0 DL8YY" in txt and b"<<< row A" in txt and state["cluster_login"].startswith(b"DA2IT-1\r\n")
 cl = m.Cluster("", 0, "DA2IT")
 cl.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
 cl.feed("DX de DL2BBB-#:    7030.5  DK9ZZ        cq                             2154Z")

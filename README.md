@@ -7,7 +7,7 @@ One Python file, standard library only, nothing to compile.
 - Live frequency and mode from the radio through Hamlib's `rigctld`
 - Typing a frequency in the logger tunes the radio
 - Two entry rows with their own frequency and mode
-- DX cluster panel with the spots on the current band
+- DX cluster panel and band map for the current band, with stations stored for later
 - Locator field with distance to each station
 - "Worked before" information from an ADIF logbook file
 - SQLite log file, ADIF and Cabrillo export
@@ -74,18 +74,37 @@ first. The command is chosen by `tune_command` in the `[rig]` section:
 | `auto` (default) | KX2: `w SWT20;`, KX3: `w SWT44;` (the radio's ATU button), any other radio: `G TUNE` (Hamlib's generic tune operation) |
 | anything else | sent to rigctld as written, e.g. `w SWT20;` |
 
-## DX cluster
+## DX cluster and band map
 
-With a cluster node configured, a panel to the right of the QSO list shows
-the spots on the band of the current entry row, newest first: frequency,
-callsign, spot time (UTC) and the spotter's comment, as far as the width
-allows (a full comment needs a terminal about 170 columns wide). It follows the band when you QSY or switch
-rows. Stations you have already worked on that band (by the contest's dupe
-rules) are shown dimmed.
+A panel to the right of the QSO list shows what is on the band of the current
+entry row. It follows the band when you QSY or switch rows, and F7 switches
+between two views:
 
-PgDn and PgUp move a highlight through the spots. Enter in an empty call
-field takes the highlighted spot: the current row is tuned to its frequency
-and the callsign is filled in. Esc removes the highlight.
+- **Newest first:** cluster spots and stations you stored for later, newest
+  on top: frequency, callsign, time (UTC) and the spotter's comment, as far
+  as the width allows (a full comment needs a terminal about 170 columns
+  wide).
+- **Band map:** the same entries sorted by frequency, plus every station in
+  your log on that band at the frequency you worked it, and a `>` line that
+  marks where the current row is tuned.
+
+Stations you have already worked on that band (by the contest's dupe rules)
+are shown dimmed; stored stations are marked with `*`.
+
+**Storing a station for later.** Type the callsign and press F9 (or Ctrl-J):
+the station is noted on the current frequency and mode and the entry row is
+cleared. Ctrl-Enter does the same in terminals that send it as a key of its
+own; many send a plain Enter instead, so check what yours does before relying
+on it. Stored stations are kept in the log file, so they survive a restart.
+They disappear when you log the station on that band, or when you highlight
+one and press Del.
+
+**Going to a station.** PgDn and PgUp move a highlight through the panel. In
+the band map the first press starts from your frequency: PgDn goes to the
+next station above, PgUp to the next below. Enter in an empty call field
+takes the highlighted entry: the current row is tuned to its frequency (and
+mode, for a stored station) and the callsign is filled in. Esc removes the
+highlight.
 
 F6 spots a station on the cluster: the callsign in the call field on the
 current row's frequency, or, if the call field is empty, the last logged QSO
@@ -93,6 +112,10 @@ on the frequency it was logged with. llog asks for an optional comment; Enter
 sends the spot, Esc cancels. A spot is public and cannot be withdrawn. The
 message line then shows the node's answer: that the spot was accepted (it
 came back from the node), or the node's own text if it refused it.
+
+The panel needs a terminal at least 142 columns wide; on narrower terminals
+it is hidden. It works without a cluster node too, with stored and worked
+stations only.
 
 Add the node to `config.ini`:
 
@@ -108,9 +131,8 @@ llog connects by telnet, logs in with `call` (your station callsign if left
 empty; some nodes want a login like `DA2IT-1` for a second connection), asks the node for its
 last 50 spots (`sh/dx 50`) and then collects new spots as they arrive. Spots
 of all bands are kept in memory for `minutes`, so changing band only changes
-what is displayed; nothing is fetched again. The panel needs a terminal at
-least 142 columns wide; on narrower terminals it is hidden. Leave `host`
-empty to switch the cluster off.
+what is displayed; nothing is fetched again. Leave `host` empty to switch the
+cluster off.
 
 ### Testing the cluster functions without a real node
 
@@ -289,7 +311,10 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | F2 | Export ADIF (`<logfile>.adi`) |
 | F3 | Export Cabrillo (`<CALL>-<date>-1.cbr`) |
 | `\` | Switch to the other entry row (A/B) |
-| PgDn / PgUp | Highlight a DX cluster spot; Enter in an empty call field takes it |
+| PgDn / PgUp | Highlight a station in the panel; Enter in an empty call field takes it |
+| F7 | Switch the panel between newest first and band map |
+| F9 or Ctrl-J | Store the station in the call field for later |
+| Del | Remove the highlighted stored station |
 | F5 | Start an ATU tune cycle on the radio (it transmits a carrier) |
 | F6 | Spot a station on the DX cluster (asks for a comment first) |
 | Up / Down | Edit a logged QSO in the list (see below) |
