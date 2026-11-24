@@ -1490,6 +1490,7 @@ def load_config(config_dir, contest):
                                "mult_prefix": "no", "mult_exclude": "",
                                "cw_f1": "CQ TEST {MYCALL} {MYCALL} K",
                                "cw_enter": "{MYCALL} QRZ",
+                               "cw_call": "{CALL}",
                                "mode": "", "category_band": "",
                                "category_mode": "", "category_power": ""}})
     station_file = os.path.join(config_dir, "config.ini")
@@ -1686,8 +1687,9 @@ class App:
     def new_entry():
         # auto: field -> callsign for which it was filled in automatically
         # manual: field -> callsign for which it was edited by hand
+        # esm_sent: callsign for which Enter has already sent the CW message
         return {"val": dict.fromkeys(FIELDS, ""), "focus": 0, "dupe_ok": "",
-                "auto": {}, "manual": {}}
+                "auto": {}, "manual": {}, "esm_sent": ""}
 
     def clear(self):
         self.entry[self.row] = self.new_entry()
@@ -1820,6 +1822,14 @@ class App:
             self.msg = "No frequency: start rigctld or type one (kHz) + Enter."
         elif self.val["loc"] and not is_locator(self.val["loc"]):
             self.msg = "Locator is not valid (e.g. JO31 or JO31AA) - fix or clear it."
+        elif (self.enter_sends() and self.cw_ready()
+              and self.entry[self.row]["esm_sent"] != call
+              and self.cfg["contest"].get("cw_call", "").strip()):
+            # ESM: the first Enter on a callsign sends it, the next one logs
+            self.send_message("cw_call")
+            self.entry[self.row]["esm_sent"] = call
+            if self.focus == 0:
+                self.focus = FIELDS.index("exch")
         elif self.dupe() and self.dupe_ok != call:
             self.dupe_ok = call
             self.msg = self.dupe_text(self.dupe()) + " - Enter again logs it anyway."
@@ -1976,7 +1986,7 @@ class App:
         return {"title": "Menu", "index": 0, "info": [], "items": [
             ("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"),
             ("b", "Backup now", "backup"), ("r", "Radio / rigctld ...", "radio"),
-            ("e", f"Enter sends message: {enter} (change)", "enter_sends"),
+            ("e", f"ESM, Enter sends message: {enter} (change)", "enter_sends"),
             ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit")]}
 
     def radio_menu(self):
@@ -2088,9 +2098,9 @@ class App:
         elif action == "enter_sends":
             new = "no" if self.enter_sends() else "yes"
             problem = self.save_setting("cw", enter_sends=new)
-            self.msg = ("Enter in an empty call field "
-                        + ("sends the CW message again" if new == "yes"
-                           else "no longer sends a CW message") + f"{problem}.")
+            self.msg = ("ESM on: in CW, Enter sends the messages"
+                        if new == "yes" else
+                        "ESM off: Enter only logs") + f"{problem}."
         elif action == "backup":
             self.manual_backup()
         elif action == "detect":

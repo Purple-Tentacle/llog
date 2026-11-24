@@ -114,7 +114,9 @@ def send(s, wait=0.6):
     os.write(fd, s.encode()); pump(wait)
 
 pump(1.5)
-send("dl1abc/p"); send(" "); send("o05"); send("\r")          # QSO 1 on 14060 CW
+send("dl1abc/p\r", 1.0)                                       # ESM in CW: Enter sends the call
+assert "b DL1ABC/P" in state["cmds"]
+send("o05"); send("\r")                                       # cursor is in the exchange; QSO 1
 send("\x1bOP", 1.0)                                           # F1 in CW: sends the CQ message
 assert "b CQ TEST DA2IT DA2IT K" in state["cmds"]
 send("\x1b")                                                  # Esc right after: stop sending
@@ -494,8 +496,16 @@ appr.rig.online, appr.rig.mode["A"], sent_cw = True, "CW", []
 appr.rig.send_cw = sent_cw.append
 appr.cfg["contest"]["cw_enter"] = "{MYCALL} QRZ"
 assert appr.enter_sends(); appr.enter(); assert sent_cw == ["DA2IT QRZ"]
-appr.menus = [appr.main_menu()]; assert appr.menus[0]["items"][4][1] == "Enter sends message: on (change)"
-appr.menu_key("e"); assert not appr.enter_sends() and "no longer sends" in appr.msg
+appr.manual_freq["A"] = 3530000; appr.rig.freq["A"] = 3530000
+appr.val["call"] = "DL1ABC"; appr.enter()                       # callsign: sent, not logged yet
+assert sent_cw[-1] == "DL1ABC" and appr.log.count() == 0 and appr.focus == m.FIELDS.index("exch")
+appr.enter(); assert appr.log.count() == 1 and len(sent_cw) == 2   # second Enter logs
+appr.val["call"] = "DL1AB"; appr.enter(); appr.val["call"] = "DL1ABD"; appr.enter()
+assert sent_cw[-2:] == ["DL1AB", "DL1ABD"] and appr.log.count() == 1   # corrected call: sent again
+appr.clear(); del sent_cw[1:]
+appr.menus = [appr.main_menu()]; assert appr.menus[0]["items"][4][1] == "ESM, Enter sends message: on (change)"
+appr.menu_key("e"); assert not appr.enter_sends() and "ESM off" in appr.msg
+appr.val["call"] = "DL2XYZ"; appr.enter(); assert appr.log.count() == 2 and len(sent_cw) == 1   # logs at once
 appr.enter(); assert sent_cw == ["DA2IT QRZ"] and appr.msg == "Not a valid callsign."
 saved.read(os.path.join(cdir, "config.ini")); assert saved["cw"]["enter_sends"] == "no"
 assert not m.App(m.load_config(cdir, "t"), m.Log(os.path.join(work, "r2.db"))).enter_sends()   # kept
