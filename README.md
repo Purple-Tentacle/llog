@@ -15,6 +15,7 @@ settings, and a log you can read with any SQLite tool.
 - Dupe checking as you type, with rules set per contest
 - Check partial against the super check partial list of contest callsigns
 - Running numbers in the sent exchange
+- In CW, Enter sends the messages of the QSO through the radio (ESM)
 - Every part of a logged QSO can be corrected in place
 - Periodic backups, ADIF and Cabrillo export
 
@@ -46,9 +47,9 @@ settings, and a log you can read with any SQLite tool.
 
 **What it does not do**
 
-llog logs and scores. It can have the radio send a few CW messages (CQ on
-F1, callsign and QRZ on Enter), but it is not a full CW keyer, and it does
-not play voice messages or decode digital modes. It is made for one operator and one radio, so there is no
+llog logs and scores. In CW it can send the standard messages of a
+contest QSO through the radio, but there is no free keyboard sending, and it
+does not play voice messages or decode digital modes. It is made for one operator and one radio, so there is no
 networking between computers and no two-radio (SO2R) operation.
 
 ## Requirements
@@ -165,16 +166,63 @@ work.
 Both of your rows share one receiver; this is quick switching between two
 frequencies or modes, not listening to both.
 
-## CW messages (F1 and ESM)
+## CW messages and ESM
 
-llog can have the radio send CW messages. The radio keys the text itself at
-its own keyer speed; llog only hands it over through `rigctld`. The texts
-are set in the contest file:
+llog can have the radio send the CW of a contest QSO. The radio keys the text
+itself at its own keyer speed; llog only hands it over through `rigctld`.
+
+**F1** calls CQ (`cw_f1`).
+
+**ESM ("Enter sends message").** With ESM on, the Enter key sends whatever
+comes next in the QSO, depending on what is in the entry row, and logs the
+QSO when it is complete. You type the callsign, press Enter, type what you
+receive, press Enter.
+
+When you are **running** (you called CQ and stations answer you):
+
+| Entry row | Enter sends | and then |
+| --- | --- | --- |
+| call field empty | `cw_enter`: `DA2IT QRZ` | |
+| callsign typed | `cw_call`: his call and your exchange, `DL1ABC 5NN N13` | cursor moves to the exchange field |
+| Enter again, exchange still missing | `cw_again`: `AGN` | |
+| received exchange typed | `cw_tu`: `TU DA2IT` | the QSO is logged |
+
+When you **search and pounce** (you answer someone's CQ):
+
+| Entry row | Enter sends | and then |
+| --- | --- | --- |
+| call field empty, or callsign typed | `cw_mycall`: `DA2IT` (again on every Enter) | cursor moves to the exchange field |
+| received exchange typed | `cw_sp_exchange`: `TU 5NN N13` | the QSO is logged |
+
+Switch between the two in the menu: Alt-M, then S ("Operating"). The header
+shows `RUN` or `S&P`.
+
+Details:
+
+- If you correct the callsign after your exchange went out, the closing
+  message repeats it: `DL1ABD TU DA2IT`.
+- If you typed callsign and exchange before the first Enter, that Enter still
+  sends your exchange, and the next one closes and logs.
+- A running number is fixed when it is first sent and stays with that QSO
+  until it is logged; the other entry row gets the next number meanwhile.
+- A dupe gets the usual warning on the Enter that would log it; press Enter
+  again to send the closing message and log it anyway.
+- `esm_required` in the contest file names the fields that must be filled
+  before Enter logs: `exch` (default), `loc`, both, or nothing. With nothing
+  required, the second Enter always logs.
+
+The messages and settings in the contest file, with their defaults:
 
 ```
 cw_f1 = CQ TEST {MYCALL} {MYCALL} K
 cw_enter = {MYCALL} QRZ
-cw_call = {CALL}
+cw_call = {CALL} 5NN {EXCH}
+cw_again = AGN
+cw_tu = TU {MYCALL}
+cw_mycall = {MYCALL}
+cw_sp_exchange = TU 5NN {EXCH}
+esm_required = exch
+esm_start = run
 ```
 
 | Placeholder | Replaced by |
@@ -183,30 +231,17 @@ cw_call = {CALL}
 | `{CALL}` | the callsign in the call field |
 | `{EXCH}` | the exchange you send, including a running number |
 
-**F1** sends `cw_f1`, a CQ call.
+An empty line such as `cw_tu =` switches that message off; the step still
+happens, without a transmission.
 
-**ESM ("Enter sends message").** With ESM on, the Enter key sends in CW:
-
-| Call field | Enter |
-| --- | --- |
-| empty | sends `cw_enter` (your callsign and QRZ) |
-| callsign typed, first Enter | sends `cw_call` (that callsign) and moves the cursor to the exchange field |
-| same callsign, next Enter | logs the QSO |
-
-If you change the callsign after it was sent, the next Enter sends the
-corrected one. Put your exchange into the message if you want it sent
-together with the callsign: `cw_call = {CALL} 5NN {EXCH}`.
-
-ESM is switched in the menu (Alt-M, then E). It is on by default, and the
-choice is kept in `config.ini` (`enter_sends` in the `[cw]` section). With ESM
-off, Enter only logs. F1 is not affected by the switch.
+ESM is switched on and off in the menu (Alt-M, then E). It is on by default,
+and the choice is kept in `config.ini` (`enter_sends` in the `[cw]` section).
+With ESM off, Enter only logs. F1 is not affected by the switch.
 
 All of this only happens while the radio is in CW; in any other mode, or
 without a radio connection, nothing is transmitted and Enter logs as usual.
 Esc shortly after a message stops it: Elecraft radios are sent their own
-back-to-receive command, other radios Hamlib's stop command. An empty
-`cw_f1 =`, `cw_enter =` or `cw_call =` switches that message off for a
-contest.
+back-to-receive command, other radios Hamlib's stop command.
 
 ## ATU tune
 
@@ -521,9 +556,7 @@ prefix (`EA8/DL1ABC` is Canary Islands); `/MM` has no country.
 | Option | Example | Meaning |
 | --- | --- | --- |
 | `call` | `OK/DA2IT` | Callsign for this contest, if it differs from the one in `config.ini` |
-| `cw_f1` | `CQ TEST {MYCALL}` | CW message sent by F1 |
-| `cw_enter` | `{MYCALL} QRZ` | CW message sent by Enter in an empty call field (ESM) |
-| `cw_call` | `{CALL}` | CW message sent by the first Enter on a callsign (ESM) |
+| `cw_...`, `esm_...` | | CW messages and ESM settings, see "CW messages and ESM" |
 | `mode` | `RTTY` | Log every QSO with this mode, whatever the radio reports (useful when the radio is in a generic data mode) |
 | `category_band`, `category_mode`, `category_power` | `ALL`, `RTTY`, `LOW` | Written as `CATEGORY-BAND` etc. into the Cabrillo header |
 
@@ -549,7 +582,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | Esc | Clear the entry line |
 | `<frequency>` Enter | QSY (`7030.5` = kHz, below 1000 = MHz, e.g. `144.3`) |
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
-| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ESM on/off, ATU tune, quit |
+| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ESM on/off, Run or S&P, ATU tune, quit |
 | `\` | Switch to the other entry row (A/B) |
 | PgDn / PgUp | Highlight a station in the panel; Enter in an empty call field takes it |
 | F7 | Switch the panel between newest first and band map |
@@ -565,7 +598,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 Alt-M opens a small menu in the middle of the screen. Up and Down move, Enter
 selects, Esc goes back one level or closes it; the letter in front of an entry selects it directly
 (`A` for ADIF, `C` for Cabrillo, `B` for a backup, `R` for the radio menu,
-`E` for the ESM switch, `T` for ATU tune, `Q` to quit). The exports are written
+`E` for the ESM switch, `S` for Run or search and pounce, `T` for ATU tune, `Q` to quit). The exports are written
 next to the log file and the message line shows the file name.
 
 ### Editing a QSO

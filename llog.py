@@ -1490,7 +1490,11 @@ def load_config(config_dir, contest):
                                "mult_prefix": "no", "mult_exclude": "",
                                "cw_f1": "CQ TEST {MYCALL} {MYCALL} K",
                                "cw_enter": "{MYCALL} QRZ",
-                               "cw_call": "{CALL}",
+                               "cw_call": "{CALL} 5NN {EXCH}",
+                               "cw_again": "AGN", "cw_tu": "TU {MYCALL}",
+                               "cw_mycall": "{MYCALL}",
+                               "cw_sp_exchange": "TU 5NN {EXCH}",
+                               "esm_required": "exch", "esm_start": "run",
                                "mode": "", "category_band": "",
                                "category_mode": "", "category_power": ""}})
     station_file = os.path.join(config_dir, "config.ini")
@@ -1619,6 +1623,13 @@ class App:
         self.prompt = None    # question on the message line: text, value, action
         self.menus = []       # open menus, the last one is shown (see main_menu)
         self.cw_until = 0     # until when a CW message is probably still sent
+        con = cfg["contest"]
+        self.esm_mode = con.get("esm_start", "run").strip().lower()   # run / sp
+        self.esm_required = con.get("esm_required", "exch").lower().replace(
+            ",", " ").split()
+        if self.esm_mode not in ("run", "sp") or set(self.esm_required) - {"exch", "loc"}:
+            sys.exit("Contest file: esm_start must be run or sp, esm_required "
+                     "a list of exch and loc (or empty)")
         self.rigctld = Rigctld(cfg)
         self.edit = None      # QSO being edited in the list, or None
         self.eval = {}        # its cell texts while editing
@@ -1672,14 +1683,21 @@ class App:
     def default_rst(self, row=None):
         return "59" if self.mode(row) in ("SSB", "FM", "AM") else "599"
 
-    def exch_sent(self):
+    def exch_sent(self, row=None):
+        """The exchange to send in a row. A running number that has already
+        gone out for the QSO in that row (ESM) is kept until it is logged,
+        and the other row does not get the same number meanwhile."""
         template = self.cfg["contest"]["exchange_sent"]
         if "#" not in template:
             return template
-        state = self.log.db.total_changes
+        held = self.entry[row or self.row]["esm_exch"]
+        if held:
+            return held
+        reserved = tuple(e["esm_exch"] for e in self.entry.values() if e["esm_exch"])
+        state = (self.log.db.total_changes, reserved)
         if self._serial[0] != state:
             self._serial = (state, next_exchange(
-                template, [q["exch_s"] for q in self.log.rows()],
+                template, [q["exch_s"] for q in self.log.rows()] + list(reserved),
                 self.cfg["contest"].getint("serial_start", 1)))
         return self._serial[1]
 
@@ -1687,9 +1705,10 @@ class App:
     def new_entry():
         # auto: field -> callsign for which it was filled in automatically
         # manual: field -> callsign for which it was edited by hand
-        # esm_sent: callsign for which Enter has already sent the CW message
+        # esm_sent: callsign for which the exchange has gone out (ESM, Run)
+        # esm_exch: the exchange that went out, kept until the QSO is logged
         return {"val": dict.fromkeys(FIELDS, ""), "focus": 0, "dupe_ok": "",
-                "auto": {}, "manual": {}, "esm_sent": ""}
+                "auto": {}, "manual": {}, "esm_sent": "", "esm_exch": ""}
 
     def clear(self):
         self.entry[self.row] = self.new_entry()
@@ -1780,12 +1799,16 @@ class App:
     def cw_ready(self):
         return self.rig.online and (self.rig.mode.get(self.row) or "") in ("CW", "CWR")
 
-    def send_message(self, key):
-        """F1: send the CW message set in the contest file."""
+    def send_message(self, key, quiet=False, prefix=""):
+        """Sends the CW message 'key' of the contest file. quiet: an empty
+        message is simply skipped. prefix: text sent in front of it."""
         text = self.message_text(self.cfg["contest"].get(key, ""))
+        if prefix and text:
+            text = f"{prefix} {text}"
         raw_mode = self.rig.mode.get(self.row) or ""
         if not text:
-            self.msg = f"No message: set {key} in the contest file."
+            if not quiet:
+                self.msg = f"No message: set {key} in the contest file."
         elif not self.rig.online:
             self.msg = "Rig offline - cannot send CW."
         elif raw_mode not in ("CW", "CWR"):
@@ -1805,11 +1828,13 @@ class App:
 
     def enter(self):
         call = self.val["call"]
+        esm = self.enter_sends() and self.cw_ready()
         if self.focus == 0 and not call and self.spot and self.spot_take():
             pass
-        elif (not call and self.enter_sends() and self.cw_ready()
-              and self.cfg["contest"].get("cw_enter", "").strip()):
-            self.send_message("cw_enter")    # empty call field in CW: "QRZ?"
+        elif not call and esm:
+            # ESM, empty call field: QRZ when running, own call in S&P
+            self.send_message("cw_enter" if self.esm_mode == "run"
+                              else "cw_mycall", quiet=True)
         elif self.focus == 0 and parse_freq(call) and not is_call(call):
             self.set_freq(parse_freq(call))
             self.val["call"] = ""
@@ -1822,31 +1847,65 @@ class App:
             self.msg = "No frequency: start rigctld or type one (kHz) + Enter."
         elif self.val["loc"] and not is_locator(self.val["loc"]):
             self.msg = "Locator is not valid (e.g. JO31 or JO31AA) - fix or clear it."
-        elif (self.enter_sends() and self.cw_ready()
-              and self.entry[self.row]["esm_sent"] != call
-              and self.cfg["contest"].get("cw_call", "").strip()):
-            # ESM: the first Enter on a callsign sends it, the next one logs
-            self.send_message("cw_call")
-            self.entry[self.row]["esm_sent"] = call
-            if self.focus == 0:
-                self.focus = FIELDS.index("exch")
+        elif esm:
+            self.esm_enter(call)
         elif self.dupe() and self.dupe_ok != call:
             self.dupe_ok = call
             self.msg = self.dupe_text(self.dupe()) + " - Enter again logs it anyway."
         else:
-            info = self.qrz.info(call) or {}
-            self.log.add(
-                ts=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                mycall=self.mycall, call=call, freq_hz=self.freq(),
-                mode=self.mode(),
-                rst_s=self.val["rst_s"] or self.default_rst(),
-                rst_r=self.val["rst_r"] or self.default_rst(),
-                exch_s=self.exch_sent(), exch_r=self.val["exch"].strip(),
-                name=info.get("name", ""), qth=info.get("qth", ""),
-                grid=self.val["loc"], country=info.get("country", ""))
-            self.log.delete_later(call, band_of(self.freq()))   # no longer "later"
-            self.msg = f"Logged {call} in row {self.row}"
-            self.clear()
+            self.log_qso(call)
+
+    def esm_enter(self, call):
+        """ESM in CW: Enter sends the next message of the QSO and logs it
+        once the required fields are filled.
+
+        Run:  callsign              -> his call + my exchange (cw_call)
+              again, still nothing  -> cw_again
+              required fields there -> cw_tu, QSO logged
+        S&P:  callsign              -> my call (cw_mycall), again on each Enter
+              required fields there -> my exchange (cw_sp_exchange), QSO logged
+        """
+        entry = self.entry[self.row]
+        missing = [f for f in self.esm_required if not self.val[f].strip()]
+        if not entry["esm_exch"]:
+            # the exchange (running number) stays the same for this QSO
+            entry["esm_exch"] = self.exch_sent()
+        if missing or (self.esm_mode == "run" and not entry["esm_sent"]):
+            if self.esm_mode == "sp":
+                self.send_message("cw_mycall", quiet=True)
+            elif entry["esm_sent"] != call:
+                self.send_message("cw_call", quiet=True)
+                entry["esm_sent"] = call
+            else:
+                self.send_message("cw_again", quiet=True)
+            self.focus = FIELDS.index((missing or ["exch"])[0])
+        elif self.dupe() and self.dupe_ok != call:
+            self.dupe_ok = call
+            self.msg = self.dupe_text(self.dupe()) + " - Enter again logs it anyway."
+        else:
+            # a callsign corrected after the exchange went out is repeated
+            fixed = self.esm_mode == "run" and entry["esm_sent"] != call
+            self.send_message("cw_tu" if self.esm_mode == "run" else "cw_sp_exchange",
+                              quiet=True, prefix=call if fixed else "")
+            sent = self.msg
+            self.log_qso(call)
+            if sent.startswith("CW:"):
+                self.msg += "  -  " + sent
+
+    def log_qso(self, call):
+        info = self.qrz.info(call) or {}
+        self.log.add(
+            ts=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            mycall=self.mycall, call=call, freq_hz=self.freq(),
+            mode=self.mode(),
+            rst_s=self.val["rst_s"] or self.default_rst(),
+            rst_r=self.val["rst_r"] or self.default_rst(),
+            exch_s=self.exch_sent(), exch_r=self.val["exch"].strip(),
+            name=info.get("name", ""), qth=info.get("qth", ""),
+            grid=self.val["loc"], country=info.get("country", ""))
+        self.log.delete_later(call, band_of(self.freq()))   # no longer "later"
+        self.msg = f"Logged {call} in row {self.row}"
+        self.clear()
 
     def leave_call_field(self):
         if is_call(self.val["call"]):
@@ -1987,6 +2046,8 @@ class App:
             ("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"),
             ("b", "Backup now", "backup"), ("r", "Radio / rigctld ...", "radio"),
             ("e", f"ESM, Enter sends message: {enter} (change)", "enter_sends"),
+            ("s", "Operating: " + ("Run, calling CQ" if self.esm_mode == "run"
+                                   else "Search & pounce") + " (change)", "esm_mode"),
             ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit")]}
 
     def radio_menu(self):
@@ -2103,6 +2164,12 @@ class App:
                         "ESM off: Enter only logs") + f"{problem}."
         elif action == "backup":
             self.manual_backup()
+        elif action == "esm_mode":
+            self.esm_mode = "sp" if self.esm_mode == "run" else "run"
+            self.msg = ("Run: Enter answers callers with their call and your "
+                        "exchange." if self.esm_mode == "run" else
+                        "Search & pounce: Enter sends your call, then your "
+                        "exchange.")
         elif action == "detect":
             self.detect(scr)
         elif action == "rig_start":
@@ -2463,6 +2530,8 @@ class App:
             else "RIG offline (manual)"
         utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") + "Z"
         head = (f" {self.mycall} {self.cfg['contest']['contest']} | "
+                + ("" if not self.enter_sends() else
+                   "RUN | " if self.esm_mode == "run" else "S&P | ") +
                 f"Row {self.row} {band_of(self.freq() or 0) or '-'} "
                 f"{self.mode()} | {rig} | {self.score_text()}"
                 f"QSOs: {self.log.count()} | {utc} ")
@@ -2629,7 +2698,7 @@ class App:
                 if active and i == entry["focus"]:
                     cursor = (line, x + len(entry["val"][name]))
                 x += max(WIDTHS[name], len(LABELS[name])) + 2
-            put(line, x, self.exch_sent() or "-")
+            put(line, x, self.exch_sent(vfo) or "-")
 
         # check partial: between the entry fields and the panel
         scp_x = x + 13

@@ -115,8 +115,9 @@ def send(s, wait=0.6):
 
 pump(1.5)
 send("dl1abc/p\r", 1.0)                                       # ESM in CW: Enter sends the call
-assert "b DL1ABC/P" in state["cmds"]
-send("o05"); send("\r")                                       # cursor is in the exchange; QSO 1
+assert "b DL1ABC/P 5NN N99" in state["cmds"]                 # his call and my exchange
+send("o05"); send("\r", 1.0)                                  # cursor is in the exchange; QSO 1
+assert "b TU DA2IT" in state["cmds"]                         # logged with a TU
 send("\x1bOP", 1.0)                                           # F1 in CW: sends the CQ message
 assert "b CQ TEST DA2IT DA2IT K" in state["cmds"]
 send("\x1b")                                                  # Esc right after: stop sending
@@ -491,27 +492,59 @@ ric._cw = lambda command, *a: sent.append(command); ric.stop_cw(); time.sleep(0.
 assert sent == ["\\stop_morse"]                          # other radios: Hamlib stop
 assert appc.message_text("{call} 5nn {exch}  {nothing} k") == "DL1ABC 5NN 001 N13 K"
 appc.send_message("cw_f1"); assert appc.msg == "Rig offline - cannot send CW."
-# menu switch for "Enter sends message", saved in config.ini
+# ESM: Enter runs the CW QSO; Run and S&P; the switch is saved in config.ini
 appr.rig.online, appr.rig.mode["A"], sent_cw = True, "CW", []
 appr.rig.send_cw = sent_cw.append
-appr.cfg["contest"]["cw_enter"] = "{MYCALL} QRZ"
-assert appr.enter_sends(); appr.enter(); assert sent_cw == ["DA2IT QRZ"]
 appr.manual_freq["A"] = 3530000; appr.rig.freq["A"] = 3530000
-appr.val["call"] = "DL1ABC"; appr.enter()                       # callsign: sent, not logged yet
-assert sent_cw[-1] == "DL1ABC" and appr.log.count() == 0 and appr.focus == m.FIELDS.index("exch")
-appr.enter(); assert appr.log.count() == 1 and len(sent_cw) == 2   # second Enter logs
-appr.val["call"] = "DL1AB"; appr.enter(); appr.val["call"] = "DL1ABD"; appr.enter()
-assert sent_cw[-2:] == ["DL1AB", "DL1ABD"] and appr.log.count() == 1   # corrected call: sent again
-appr.clear(); del sent_cw[1:]
+appr.cfg["contest"]["exchange_sent"] = "# N13"
+EXCH = m.FIELDS.index("exch")
+assert appr.enter_sends() and appr.esm_mode == "run" and appr.esm_required == ["exch"]
+appr.enter(); assert sent_cw == ["DA2IT QRZ"]                    # Run, empty call field
+appr.val["call"] = "DL1ABC"; appr.enter()                        # his call + my exchange
+assert sent_cw[-1] == "DL1ABC 5NN 001 N13" and appr.log.count() == 0 and appr.focus == EXCH
+appr.enter(); assert sent_cw[-1] == "AGN" and appr.log.count() == 0   # nothing received yet
+appr.row = "B"; appr.rig.mode["B"] = "CW"; appr.rig.freq["B"] = 3540000
+assert appr.exch_sent() == "002 N13" and appr.exch_sent("A") == "001 N13"   # 001 is taken by row A
+appr.row = "A"; appr.val["exch"] = "H24"; appr.enter()            # complete: TU and log
+assert sent_cw[-1] == "TU DA2IT" and appr.log.count() == 1
+assert appr.log.newest()["exch_s"] == "001 N13" and appr.exch_sent() == "002 N13"
+appr.val["call"] = "DL1AB"; appr.enter(); appr.val["call"] = "DL1ABD"; appr.val["exch"] = "NM"
+appr.enter()                                                     # corrected call is repeated
+assert sent_cw[-2:] == ["DL1AB 5NN 002 N13", "DL1ABD TU DA2IT"] and appr.log.newest()["call"] == "DL1ABD"
+appr.val.update(call="DK5ZZ", exch="H01"); appr.enter()           # all typed first: exchange still goes out
+assert sent_cw[-1] == "DK5ZZ 5NN 003 N13" and appr.log.count() == 2
+appr.enter(); assert sent_cw[-1] == "TU DA2IT" and appr.log.count() == 3
+appr.val.update(call="DK5ZZ", exch="H01"); appr.enter(); appr.enter()    # dupe: warned, not sent TU
+assert "DUPE" in appr.msg and sent_cw[-1] == "DK5ZZ 5NN 004 N13" and appr.log.count() == 3
+appr.enter(); assert sent_cw[-1] == "TU DA2IT" and appr.log.count() == 4
+appr.cfg["contest"]["cw_tu"] = ""                                  # a message switched off
+appr.val["call"] = "DJ1AA"; appr.enter(); appr.val["exch"] = "X"; n = len(sent_cw); appr.enter()
+assert len(sent_cw) == n and appr.log.count() == 5
+# search & pounce, from the menu
+appr.menus = [appr.main_menu()]; assert appr.menus[0]["items"][5][1] == "Operating: Run, calling CQ (change)"
+appr.menu_key("s"); assert appr.esm_mode == "sp" and "Search & pounce" in appr.msg
+appr.enter(); assert sent_cw[-1] == "DA2IT"                       # empty call field: my call
+appr.val["call"] = "OK1AAA"; appr.enter(); appr.enter()
+assert sent_cw[-2:] == ["DA2IT", "DA2IT"] and appr.log.count() == 5 and appr.focus == EXCH
+appr.val["exch"] = "015"; appr.enter()
+assert sent_cw[-1] == "TU 5NN 006 N13" and appr.log.newest()["call"] == "OK1AAA"
+appr.menus = [appr.main_menu()]; assert "Search & pounce" in appr.menus[0]["items"][5][1]
+appr.menu_key("s"); assert appr.esm_mode == "run"
+# no required field: the second Enter always logs
+appr.esm_required = []; appr.cfg["contest"]["cw_tu"] = "TU {MYCALL}"
+appr.val["call"] = "DL9XX"; appr.enter(); assert appr.log.count() == 6
+appr.enter(); assert appr.log.count() == 7 and sent_cw[-1] == "TU DA2IT"
+appr.esm_required = ["exch"]; del sent_cw[:]
+# ESM off: Enter only logs; F1 still sends
 appr.menus = [appr.main_menu()]; assert appr.menus[0]["items"][4][1] == "ESM, Enter sends message: on (change)"
 appr.menu_key("e"); assert not appr.enter_sends() and "ESM off" in appr.msg
-appr.val["call"] = "DL2XYZ"; appr.enter(); assert appr.log.count() == 2 and len(sent_cw) == 1   # logs at once
-appr.enter(); assert sent_cw == ["DA2IT QRZ"] and appr.msg == "Not a valid callsign."
+appr.val["call"] = "DL2XYZ"; appr.enter(); assert appr.log.count() == 8 and not sent_cw
+appr.enter(); assert not sent_cw and appr.msg == "Not a valid callsign."
 saved.read(os.path.join(cdir, "config.ini")); assert saved["cw"]["enter_sends"] == "no"
 assert not m.App(m.load_config(cdir, "t"), m.Log(os.path.join(work, "r2.db"))).enter_sends()   # kept
 appr.menus = [appr.main_menu()]; assert "off" in appr.menus[0]["items"][4][1]
-appr.menu_key("e"); appr.enter(); assert sent_cw == ["DA2IT QRZ"] * 2
-appr.send_message("cw_f1"); assert len(sent_cw) == 3            # F1 is not affected by the switch
+appr.menu_key("e"); appr.enter(); assert sent_cw == ["DA2IT QRZ"]
+appr.send_message("cw_f1"); assert sent_cw[-1] == "CQ TEST DA2IT DA2IT K"
 appr.rig.online = False
 # periodic backup
 bdir = os.path.join(work, "bk"); c9 = m.load_config(work, "wsa"); c9["backup"]["folder"] = bdir
