@@ -504,6 +504,18 @@ def rigctl_models(command="rigctl"):
     return models
 
 
+def elecraft_model(options):
+    """Radio model from the answer to the OM command. KX2 and KX3 answer
+    'OM APF---TBXI0n;' with n = 1 for the KX2 and 2 for the KX3; the K3
+    answers with option letters only, and an R among them marks a K3S."""
+    options = options.strip()
+    if options.endswith("01;"):
+        return "KX2"
+    if options.endswith("02;"):
+        return "KX3"
+    return "K3S" if "R" in options[2:] else "K3"
+
+
 def probe_elecraft(device):
     """Asks a serial port whether an Elecraft radio is listening.
     Returns (model name, baud rate), (None, error text) or (None, "")."""
@@ -535,9 +547,7 @@ def probe_elecraft(device):
             termios.tcsetattr(fd, termios.TCSANOW, attrs)
             if "ID017;" not in ask(b"ID;"):
                 continue
-            options = ask(b"OM;")        # the last two characters name the model
-            name = {"01;": "KX3", "02;": "KX2"}.get(options[-3:], "K3")
-            return name, baud
+            return elecraft_model(ask(b"OM;")), baud
         return None, ""
     except (OSError, termios.error) as exc:
         return None, str(exc)

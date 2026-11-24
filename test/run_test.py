@@ -388,6 +388,8 @@ assert [(r["radio"], os.path.basename(r["device"]), r["speed"]) for r in radios]
 assert len(notes) == 1 and "Permission denied" in notes[0]
 assert m.detect_radios(os.path.join(work, "missing"))[0] == []
 assert m.probe_elecraft(os.path.join(work, "missing"))[0] is None       # no such port
+assert m.elecraft_model("OM AP----TB-I01;") == "KX2" and m.elecraft_model("OM APF---TBXI02;") == "KX3"
+assert m.elecraft_model("OM APXSDFfLV---;") == "K3" and m.elecraft_model("OM APXSDFfLVR--;") == "K3S"
 ini = os.path.join(work, "edit.ini")
 open(ini, "w").write("; my settings\n[station]\ncall = DA2IT\n\n[rig]\n# keep me\nhost = 127.0.0.1\nport = 4532\n\n[cluster]\nhost = x\n")
 m.set_ini_values(ini, "rig", {"port": "4533", "rigctld_radio": "KX2"})
