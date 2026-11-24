@@ -144,6 +144,7 @@ send("dl8zz\n"); send("dl8yy"); send("\x1b[20~")               # Ctrl-J and F9: 
 send("\x1b[18~")                                              # F7: band map
 send("\x1bm"); send("t", 1.5)                                  # Alt-M, T: ATU tune
 send("\x1bm"); send("b")                                       # Alt-M, B: backup now
+send("\x1bm"); send("r"); send("\x1b"); send("\x1b")           # Radio submenu, back, close
 send("\x1bm"); send("\x1b")                                   # Alt-M, Esc: menu closed again
 send("\x1bm"); send("\r")                                     # Alt-M, Enter: ADIF
 send("\x1bm"); send("\x1bOB"); send("\r")                     # Alt-M, Down, Enter: Cabrillo                            # F2, F3 exports
@@ -352,6 +353,75 @@ app8.val["call"] = "DM6EE"; app8.val["exch"] = "H33"; assert app8.new_mult() == 
 app8.enter(); assert [t for row in app8.mult_panel(80) for t, _ in row][1:] == ["DM6", "H33"]
 # old style points still work, and no country file is needed for them
 assert m.qso_points(m.score_rules(m.load_config(work, "wsa")), "DL1A", "FM", 144300000) == 2
+# radio detection, config.ini editing and running rigctld from llog
+tools = os.path.join(work, "bin"); os.makedirs(tools)
+def script(name, body):
+    path = os.path.join(tools, name)
+    open(path, "w").write("#!" + sys.executable + "\n" + body); os.chmod(path, 0o755)
+    return path
+script("rigctl", 'print("""' + """ Rig #  Mfg                    Model                   Version         Status      Macro
+     1  Hamlib                 Dummy                   20240709.0      Stable      RIG_MODEL_DUMMY
+  2044  Elecraft               KX2                     20240604.21     Stable      RIG_MODEL_KX2
+  3085  Icom                   IC-705                  20240831.5      Stable      RIG_MODEL_IC705""" + '""")\n')
+fake_daemon = script("rigctld", """import socket, sys, time
+if "-m" in sys.argv and sys.argv[sys.argv.index("-m") + 1] == "666":
+    print("rig_open: error = IO error"); sys.exit(2)
+srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(("127.0.0.1", int(sys.argv[sys.argv.index("-t") + 1]))); srv.listen()
+while True:
+    srv.accept()[0].close()
+""")
+models = m.rigctl_models(os.path.join(tools, "rigctl"))
+assert models["KX2"] == "2044" and models["IC-705"] == "3085" and m.rigctl_models("/nonexistent") == {}
+byid = os.path.join(work, "by-id"); os.makedirs(byid)
+for name in ("usb-FTDI_FT232R_USB_UART_A1B2C3-if00-port0", "usb-Icom_Inc._IC-705_IC-705_12345678-if00",
+             "usb-Icom_Inc._IC-705_IC-705_12345678-if02", "usb-Silicon_Labs_CP2102_0001-if00-port0",
+             "usb-1a86_USB_Serial-if00-port0"):
+    open(os.path.join(byid, name), "w").close()
+def fake_probe(path):
+    return (("KX2", 38400) if "FTDI" in path else (None, "Permission denied") if "CP2102" in path
+            else (None, ""))
+radios, notes = m.detect_radios(byid, fake_probe)
+assert [(r["radio"], os.path.basename(r["device"]), r["speed"]) for r in radios] == [
+    ("KX2", "usb-FTDI_FT232R_USB_UART_A1B2C3-if00-port0", "38400"),
+    ("IC-705", "usb-Icom_Inc._IC-705_IC-705_12345678-if00", "")]
+assert len(notes) == 1 and "Permission denied" in notes[0]
+assert m.detect_radios(os.path.join(work, "missing"))[0] == []
+assert m.probe_elecraft(os.path.join(work, "missing"))[0] is None       # no such port
+ini = os.path.join(work, "edit.ini")
+open(ini, "w").write("; my settings\n[station]\ncall = DA2IT\n\n[rig]\n# keep me\nhost = 127.0.0.1\nport = 4532\n\n[cluster]\nhost = x\n")
+m.set_ini_values(ini, "rig", {"port": "4533", "rigctld_radio": "KX2"})
+assert open(ini).read() == ("; my settings\n[station]\ncall = DA2IT\n\n[rig]\n# keep me\nhost = 127.0.0.1\n"
+                            "port = 4533\nrigctld_radio = KX2\n\n[cluster]\nhost = x\n")
+m.set_ini_values(ini, "backup", {"keep": "50"}); assert open(ini).read().endswith("[cluster]\nhost = x\n[backup]\nkeep = 50\n")
+free = socket.socket(); free.bind(("127.0.0.1", 0)); free_port = free.getsockname()[1]; free.close()
+cdir = os.path.join(work, "rcfg"); os.makedirs(os.path.join(cdir, "contests"))
+open(os.path.join(cdir, "config.ini"), "w").write(
+    f"[station]\ncall = DA2IT\n[rig]\nhost = 127.0.0.1\nport = {free_port}\nrigctld_command = {fake_daemon}\n")
+open(os.path.join(cdir, "contests", "t.ini"), "w").write("[contest]\ncontest = T\n")
+appr = m.App(m.load_config(cdir, "t"), m.Log(os.path.join(work, "r.db")))
+assert appr.rigctld.state() == "not running" and "not set up" in appr.rigctld.describe()
+assert "No radio set up yet" in appr.rigctld.start()
+real_detect = m.detect_radios
+m.detect_radios = lambda: (radios, notes)                       # two radios: ask which one
+appr.menus = [appr.main_menu()]; appr.menu_key("r")
+assert appr.menus[-1]["title"] == "Radio" and appr.menus[-1]["info"][1] == "rigctld: not running"
+appr.menu_key("d"); assert appr.menus[-1]["title"] == "Which radio?" and len(appr.menus[-1]["items"]) == 2
+appr.menu_key("1")
+saved = configparser.ConfigParser(); saved.read(os.path.join(cdir, "config.ini"))
+assert (saved["rig"]["rigctld_radio"], saved["rig"]["rigctld_model"], saved["rig"]["rigctld_speed"]) == ("KX2", "2044", "38400")
+assert saved["rig"]["rigctld_device"].endswith("usb-FTDI_FT232R_USB_UART_A1B2C3-if00-port0") and not appr.menus
+assert "started" in appr.rigctld.start() and appr.rigctld.ours() and appr.rigctld.reachable()
+assert open(appr.rigctld.log_path).readline().split()[1:5] == ["-m", "2044", "-r", saved["rig"]["rigctld_device"]]
+assert appr.rigctld.state() == "running (started by llog)" and "already running" in appr.rigctld.start()
+appr.menus = [appr.radio_menu()]; appr.menu_key("d"); assert "Stop rigctld first" in appr.msg
+assert appr.rigctld.stop() == "rigctld stopped." and not appr.rigctld.reachable()
+appr.cfg["rig"]["rigctld_model"] = "666"; assert "stopped at once: rig_open: error = IO error" in appr.rigctld.start()
+appr.menus = [appr.radio_menu()]; appr.menu_key("o")
+saved.read(os.path.join(cdir, "config.ini")); assert saved["rig"]["rigctld_autostart"] == "yes"
+m.detect_radios = lambda: ([], ["ttyUSB0: Permission denied"]); appr.menus = [appr.radio_menu()]; appr.menu_key("d")
+assert "dialout" in appr.msg
+m.detect_radios = real_detect
 # periodic backup
 bdir = os.path.join(work, "bk"); c9 = m.load_config(work, "wsa"); c9["backup"]["folder"] = bdir
 c9["backup"]["keep"] = "2"
@@ -365,7 +435,7 @@ app9.backup_at -= 301; assert app9.auto_backup() is None     # unchanged: no new
 for call in ("DL1BB", "DL1CC"):
     time.sleep(1.1); app9.val["call"] = call; app9.enter(); assert app9.auto_backup(force=True)
 assert len(os.listdir(bdir)) == 2 and os.path.basename(first) not in os.listdir(bdir)   # keep = 2
-time.sleep(1.1); before = set(os.listdir(bdir)); app9.menu = 0; app9.menu_key("b")
+time.sleep(1.1); before = set(os.listdir(bdir)); app9.menus = [app9.main_menu()]; app9.menu_key("b")
 assert app9.msg.startswith("Backup written: ") and len(os.listdir(bdir)) == 2
 assert set(os.listdir(bdir)) != before and app9.auto_backup(force=True) is None
 # running number in the sent exchange
@@ -462,6 +532,7 @@ assert "CLAIMED-SCORE: 44" in open(os.path.join(work, "DA2IT-" +
 import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
 assert b"Mults" in txt and b"NOTO" in txt and b"O55" in txt
+assert b"Detect radio and save settings" in txt and b"not set up yet" in txt
 assert b"Newest" in txt and b"K1ABC" in txt and b"2153 CQ TEST" in txt
 assert b"Band map 40m" in txt and b"stored" in txt and state["cluster_login"].startswith(b"DA2IT-1\r\n")
 cl = m.Cluster("", 0, "DA2IT")

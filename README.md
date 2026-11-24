@@ -21,24 +21,65 @@ Dupe checking and scoring are configurable per contest.
 
 ## Usage
 
-Start `rigctld` for your radio, then start llog with a contest name:
-
 ```
-# Icom IC-705 over USB (2 m / 70 cm, e.g. WNA and WSA)
-rigctl -l | grep 705                          # find the Hamlib model number
-rigctld -m <model> -r /dev/ttyACM0 &
-
-# Elecraft KX2 with KXUSB cable (HF)
-rigctl -l | grep -i kx2
-rigctld -m <model> -r /dev/ttyUSB0 -s 38400 &
-
 python3 llog.py wsa                 # log file wsa.db in the current directory
 python3 llog.py wsa wsa-2026-12.db  # explicit log file, e.g. one per month
 python3 llog.py                     # lists the configured contests
 ```
 
-Without a running `rigctld` the logger still works; a typed frequency is then
+Without a radio connection the logger still works; a typed frequency is then
 used for the log only.
+
+## Radio connection (rigctld)
+
+llog talks to the radio through Hamlib's `rigctld`. It can set that up and
+run it for you: open the menu with Alt-M and choose **Radio / rigctld**.
+
+| Entry | What it does |
+| --- | --- |
+| Detect radio and save settings | Looks for a radio on the USB serial ports and writes what it finds to the `[rig]` section of `config.ini` |
+| Start rigctld | Starts `rigctld` with these settings |
+| Stop rigctld | Stops the `rigctld` that llog started |
+| Start with llog: on/off | Whether llog starts `rigctld` by itself every time |
+
+The top of the submenu shows the radio that is set up and whether `rigctld`
+is running.
+
+**Detection.** Icom radios connected by USB (IC-705, IC-7300, ...) are
+recognised by their USB name. Elecraft radios (KX2, KX3, K3) sit behind a
+plain USB serial cable, so llog asks every such port for its identity at
+38400, 19200, 9600 and 4800 baud. That sends a few characters to each USB
+serial adapter that is plugged in; unplug other serial devices first if they
+might react to that. If several radios are found, llog asks which one to
+use. Detection needs the serial port for itself, so stop `rigctld` first.
+
+**Running.** A `rigctld` started by llog is stopped again when llog quits.
+Its messages go to `~/.config/llog/rigctld.log`; if it stops right after the
+start, the message line shows the last line of that file. If a `rigctld` is
+already running (started by you in another terminal), llog uses it and does
+not start a second one.
+
+The settings in `config.ini`, in case you want to set them by hand:
+
+```
+[rig]
+rigctld_radio = KX2
+rigctld_model = 2044
+rigctld_device = /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_XXXXXXXX-if00-port0
+rigctld_speed = 38400
+rigctld_options =
+rigctld_autostart = no
+```
+
+`rigctld_options` takes extra `rigctld` options such as `--vfo`.
+
+You can still start `rigctld` yourself instead:
+
+```
+rigctl -l | grep -i -e 705 -e kx2             # Hamlib model numbers
+rigctld -m <model> -r /dev/ttyACM0 &          # Icom IC-705 over USB
+rigctld -m <model> -r /dev/ttyUSB0 -s 38400 & # Elecraft KX2 with KXUSB cable
+```
 
 ## Two entry rows (A and B)
 
@@ -376,7 +417,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | Esc | Clear the entry line |
 | `<frequency>` Enter | QSY (`7030.5` = kHz, below 1000 = MHz, e.g. `144.3`) |
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
-| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, ATU tune, quit |
+| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ATU tune, quit |
 | `\` | Switch to the other entry row (A/B) |
 | PgDn / PgUp | Highlight a station in the panel; Enter in an empty call field takes it |
 | F7 | Switch the panel between newest first and band map |
@@ -390,7 +431,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 ### Menu
 
 Alt-M opens a small menu in the middle of the screen. Up and Down move, Enter
-selects, Esc closes it; the letter in front of an entry selects it directly
+selects, Esc goes back one level or closes it; the letter in front of an entry selects it directly
 (`A` for ADIF, `C` for Cabrillo, `B` for a backup, `T` for ATU tune, `Q` to
 quit). The exports are written
 next to the log file and the message line shows the file name.

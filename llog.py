@@ -10,15 +10,20 @@ Hamlib's rigctld, callsign lookup through the QRZ.com XML API.
 import argparse
 import configparser
 import curses
+import fcntl
 import fnmatch
 import getpass
 import math
 import os
 import queue
 import re
+import select
 import socket
 import sqlite3
+import struct
+import subprocess
 import sys
+import termios
 import threading
 import time
 import unicodedata
@@ -481,6 +486,224 @@ def next_exchange(template, sent_so_far, start=1):
 def ascii_only(text):
     return unicodedata.normalize("NFKD", text or "").encode(
         "ascii", "ignore").decode()
+
+
+# ------------------------------------------------------------- radio setup
+def rigctl_models(command="rigctl"):
+    """Hamlib model numbers by model name, read from 'rigctl -l'."""
+    try:
+        listing = subprocess.run([command, "-l"], capture_output=True,
+                                 text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    models = {}
+    for line in listing.splitlines():
+        match = re.match(r"\s*(\d+)\s+(.*?)\s{2,}(\S.*?)\s{2,}", line)
+        if match:
+            models.setdefault(match.group(3).strip().upper(), match.group(1))
+    return models
+
+
+def probe_elecraft(device):
+    """Asks a serial port whether an Elecraft radio is listening.
+    Returns (model name, baud rate), (None, error text) or (None, "")."""
+    speeds = ((38400, termios.B38400), (19200, termios.B19200),
+              (9600, termios.B9600), (4800, termios.B4800))
+    try:
+        fd = os.open(device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    except OSError as exc:
+        return None, exc.strerror or str(exc)
+    try:
+        # keep DTR and RTS low: some radios use them for PTT or keying
+        fcntl.ioctl(fd, termios.TIOCMBIC,
+                    struct.pack("I", termios.TIOCM_DTR | termios.TIOCM_RTS))
+
+        def ask(command):
+            termios.tcflush(fd, termios.TCIOFLUSH)
+            os.write(fd, command)
+            answer, end = b"", time.time() + 0.4
+            while time.time() < end and not answer.endswith(b";"):
+                if select.select([fd], [], [], 0.05)[0]:
+                    answer += os.read(fd, 100)
+            return answer.decode("ascii", "replace")
+
+        for baud, flag in speeds:
+            attrs = termios.tcgetattr(fd)
+            attrs[0] = attrs[1] = attrs[3] = 0                  # raw
+            attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+            attrs[4] = attrs[5] = flag
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+            if "ID017;" not in ask(b"ID;"):
+                continue
+            options = ask(b"OM;")        # the last two characters name the model
+            name = {"01;": "KX3", "02;": "KX2"}.get(options[-3:], "K3")
+            return name, baud
+        return None, ""
+    except (OSError, termios.error) as exc:
+        return None, str(exc)
+    finally:
+        os.close(fd)
+
+
+def detect_radios(by_id="/dev/serial/by-id", probe=probe_elecraft):
+    """Radios on the serial ports: (list of settings dicts, list of notes).
+    Icom radios are recognised by their USB name, Elecraft radios by asking
+    the device behind each USB serial adapter."""
+    found, notes = [], []
+    try:
+        names = sorted(os.listdir(by_id))
+    except OSError:
+        return found, ["No USB serial device found (" + by_id + " is missing)."]
+    seen = set()
+    for name in names:
+        path = os.path.join(by_id, name)
+        icom = re.search(r"Icom.*?(IC-[0-9A-Za-z]+)", name)
+        if icom:
+            if icom.group(1) in seen:    # second port of the same radio
+                continue
+            seen.add(icom.group(1))
+            found.append({"radio": icom.group(1).upper(), "device": path,
+                          "speed": ""})
+            continue
+        model, info = probe(path)
+        if model:
+            found.append({"radio": model, "device": path, "speed": str(info)})
+        elif info:
+            notes.append(f"{name}: {info}")
+    return found, notes
+
+
+def set_ini_values(path, section, values):
+    """Sets key = value lines in one section of an ini file and leaves
+    everything else, comments included, as it is."""
+    try:
+        with open(path, encoding="utf-8") as source:
+            lines = source.read().splitlines()
+    except OSError:
+        lines = []
+    todo = dict(values)
+    out, inside, done = [], False, False
+    for line in lines + ["[__end__]"]:
+        header = re.match(r"\s*\[(.+?)\]", line)
+        if header:
+            if inside:                           # leaving our section
+                while out and not out[-1].strip():
+                    out.pop()
+                out += [f"{k} = {v}" for k, v in todo.items()] + [""]
+                todo, done = {}, True
+            inside = header.group(1) == section
+        elif inside:
+            key = line.split("=", 1)[0].strip()
+            if "=" in line and key in todo:
+                line = f"{key} = {todo.pop(key)}"
+        out.append(line)
+    out.pop()                                    # the [__end__] marker
+    if not done:
+        out += [f"[{section}]"] + [f"{k} = {v}" for k, v in todo.items()]
+    with open(path, "w", encoding="utf-8") as target:
+        target.write("\n".join(out).rstrip("\n") + "\n")
+
+
+class Rigctld:
+    """Starts and stops a rigctld that llog runs itself."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.proc = None
+        self.log_path = os.path.join(
+            cfg["station"].get("config_dir", DEFAULT_CONFIG_DIR), "rigctld.log")
+
+    def model_number(self, radio):
+        """Hamlib model number for a radio name such as KX2, or ''."""
+        command = self.cfg["rig"].get("rigctld_command", "rigctld").strip()
+        rigctl = os.path.join(os.path.dirname(command), "rigctl")   # same folder
+        return rigctl_models(rigctl).get(radio.strip().upper(), "")
+
+    def reachable(self):
+        rig = self.cfg["rig"]
+        try:
+            socket.create_connection((rig["host"], rig.getint("port")),
+                                     timeout=0.5).close()
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def ours(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def describe(self):
+        rig = self.cfg["rig"]
+        if not rig.get("rigctld_device", "").strip():
+            return "not set up yet - use Detect"
+        speed = rig.get("rigctld_speed", "").strip()
+        return (f"{rig.get('rigctld_radio', '') or 'model ' + rig.get('rigctld_model', '?')}"
+                f" on {os.path.basename(rig['rigctld_device'])[:34]}"
+                + (f", {speed} Bd" if speed else ""))
+
+    def state(self):
+        if self.ours():
+            return "running (started by llog)"
+        return "running (started elsewhere)" if self.reachable() else "not running"
+
+    def start(self):
+        """Returns a text for the message line."""
+        rig = self.cfg["rig"]
+        device = rig.get("rigctld_device", "").strip()
+        if self.ours() or self.reachable():
+            return "rigctld is already running."
+        if not device:
+            return "No radio set up yet: menu > Radio > Detect radio."
+        if rig["host"] not in ("127.0.0.1", "localhost", "::1"):
+            return "rigctld host in config.ini is another computer - not started."
+        command = rig.get("rigctld_command", "rigctld").strip() or "rigctld"
+        model = rig.get("rigctld_model", "").strip()
+        if not model.isdigit():          # look the number up from the name
+            model = self.model_number(rig.get("rigctld_radio", ""))
+        if not model:
+            return ("Hamlib model number unknown - is Hamlib installed? "
+                    "Set rigctld_model in config.ini.")
+        args = [command, "-m", model, "-r", device, "-t", rig["port"]]
+        if rig.get("rigctld_speed", "").strip():
+            args += ["-s", rig["rigctld_speed"].strip()]
+        args += rig.get("rigctld_options", "").split()
+        try:
+            with open(self.log_path, "w") as log:
+                log.write(" ".join(args) + "\n")
+                log.flush()
+                self.proc = subprocess.Popen(args, stdout=log, stderr=log,
+                                             stdin=subprocess.DEVNULL)
+        except OSError as exc:
+            self.proc = None
+            return f"Could not start {command}: {exc.strerror or exc}"
+        end = time.time() + 4
+        while time.time() < end:
+            if self.proc.poll() is not None:
+                return "rigctld stopped at once: " + self.last_log_line()
+            if self.reachable():
+                return f"rigctld started ({self.describe()})."
+            time.sleep(0.1)
+        return "rigctld started but does not answer yet - see " + self.log_path
+
+    def last_log_line(self):
+        try:
+            with open(self.log_path) as log:
+                lines = [line.strip() for line in log if line.strip()]
+            return lines[-1][:120] if len(lines) > 1 else "no message"
+        except OSError:
+            return "no message"
+
+    def stop(self):
+        if not self.ours():
+            self.proc = None
+            return ("rigctld was not started by llog - stop it where you "
+                    "started it." if self.reachable() else "rigctld is not running.")
+        self.proc.terminate()
+        try:
+            self.proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+        self.proc = None
+        return "rigctld stopped."
 
 
 # --------------------------------------------------------------------- rig
@@ -1138,7 +1361,11 @@ def load_config(config_dir, contest):
                                "country_file": ""},
                    "qrz": {"username": "", "password": ""},
                    "rig": {"host": "127.0.0.1", "port": "4532",
-                           "vfo_switch": "retune", "tune_command": "auto"},
+                           "vfo_switch": "retune", "tune_command": "auto",
+                           "rigctld_radio": "", "rigctld_model": "",
+                           "rigctld_device": "", "rigctld_speed": "",
+                           "rigctld_options": "", "rigctld_autostart": "no",
+                           "rigctld_command": "rigctld"},
                    "cluster": {"host": "", "port": "7300", "minutes": "30",
                                "call": ""},
                    "backup": {"minutes": "5", "keep": "50", "folder": ""},
@@ -1278,7 +1505,8 @@ class App:
         self.spot = ""        # callsign of the highlighted panel entry
         self.view = "newest"  # panel view: "newest" or "map" (band map)
         self.prompt = None    # question on the message line: text, value, action
-        self.menu = None      # index of the highlighted menu item, or None
+        self.menus = []       # open menus, the last one is shown (see main_menu)
+        self.rigctld = Rigctld(cfg)
         self.edit = None      # QSO being edited in the list, or None
         self.eval = {}        # its cell texts while editing
         self.efocus = 1       # edited cell (index into COLUMNS)
@@ -1599,9 +1827,23 @@ class App:
         self.msg = f"Backup written: {target}"
 
     # ---- menu (Alt-M)
-    MENU = (("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"),
-            ("b", "Backup now", "backup"),
-            ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit"))
+    # a menu is a dict: title, items [(hotkey, text, action)], index, info lines
+    def main_menu(self):
+        return {"title": "Menu", "index": 0, "info": [], "items": [
+            ("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"),
+            ("b", "Backup now", "backup"), ("r", "Radio / rigctld ...", "radio"),
+            ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit")]}
+
+    def radio_menu(self):
+        auto = self.cfg["rig"].get("rigctld_autostart", "no").strip().lower()
+        auto = "on" if auto in ("yes", "true", "on", "1") else "off"
+        return {"title": "Radio", "index": 0,
+                "info": ["Radio:   " + self.rigctld.describe(),
+                         "rigctld: " + self.rigctld.state()],
+                "items": [("d", "Detect radio and save settings", "detect"),
+                          ("s", "Start rigctld", "rig_start"),
+                          ("x", "Stop rigctld", "rig_stop"),
+                          ("o", f"Start with llog: {auto} (change)", "rig_auto")]}
 
     def atu_tune(self):
         if self.rig.online:
@@ -1612,29 +1854,102 @@ class App:
         else:
             self.msg = "Rig offline - cannot start ATU tune."
 
-    def menu_key(self, ch):
+    def save_rig(self, **values):
+        """Stores rigctld settings in config.ini and in the running config."""
+        path = os.path.join(self.cfg["station"].get("config_dir",
+                                                    DEFAULT_CONFIG_DIR), "config.ini")
+        self.cfg["rig"].update(values)
+        try:
+            set_ini_values(path, "rig", values)
+            return ""
+        except OSError as exc:
+            return f" (not saved to config.ini: {exc.strerror or exc})"
+
+    def use_radio(self, radio):
+        number = self.rigctld.model_number(radio["radio"])
+        problem = self.save_rig(rigctld_radio=radio["radio"], rigctld_model=number,
+                                rigctld_device=radio["device"],
+                                rigctld_speed=radio["speed"])
+        self.msg = (f"Radio set: {self.rigctld.describe()}{problem}. "
+                    "Start rigctld from the Radio menu."
+                    + ("" if number else " Hamlib model number not found - "
+                       "is Hamlib installed?"))
+
+    def detect(self, scr):
+        if self.rigctld.reachable():
+            self.msg = "Stop rigctld first: detection needs the serial port."
+            return
+        self.msg = "Detecting radios ..."
+        if scr:
+            self.draw(scr)
+        found, notes = detect_radios()
+        if len(found) == 1:
+            self.use_radio(found[0])
+        elif found:
+            self.menus = [{"title": "Which radio?", "index": 0, "info": [], "items": [
+                (str(i), f"{r['radio']} on {os.path.basename(r['device'])[:40]}",
+                 ("pick", r)) for i, r in enumerate(found, 1)]}]
+            self.msg = "Several radios found - choose one."
+        else:
+            hint = notes[0] if notes else "no radio answered"
+            if "ermission" in hint:
+                hint += " - add your user to the group 'dialout' and log in again"
+            self.msg = ("No radio found: " + hint + ". Is it switched on and "
+                        "connected? (KX2: menu RS232 not OFF)")
+
+    def menu_action(self, scr, action):
         """Returns False to quit."""
-        hotkeys = [key for key, _, _ in self.MENU]
+        if isinstance(action, tuple):            # ("pick", radio)
+            self.use_radio(action[1])
+        elif action == "quit":
+            return False
+        elif action == "radio":
+            self.menus = [self.main_menu(), self.radio_menu()]
+            self.menus[0]["index"] = 3
+        elif action == "atu":
+            self.atu_tune()
+        elif action == "backup":
+            self.manual_backup()
+        elif action == "detect":
+            self.detect(scr)
+        elif action == "rig_start":
+            self.msg = "Starting rigctld ..."
+            if scr:
+                self.draw(scr)
+            self.msg = self.rigctld.start()
+        elif action == "rig_stop":
+            self.msg = self.rigctld.stop()
+        elif action == "rig_auto":
+            now = self.cfg["rig"].get("rigctld_autostart", "no").strip().lower()
+            new = "no" if now in ("yes", "true", "on", "1") else "yes"
+            problem = self.save_rig(rigctld_autostart=new)
+            self.msg = (f"rigctld is {'now' if new == 'yes' else 'no longer'} "
+                        f"started together with llog{problem}.")
+        else:
+            self.export(action)
+        return True
+
+    def menu_key(self, ch, scr=None):
+        """Returns False to quit."""
+        menu = self.menus[-1]
+        hotkeys = [key for key, _, _ in menu["items"]]
         if ch == curses.KEY_UP:
-            self.menu = (self.menu - 1) % len(self.MENU)
+            menu["index"] = (menu["index"] - 1) % len(hotkeys)
         elif ch == curses.KEY_DOWN:
-            self.menu = (self.menu + 1) % len(self.MENU)
+            menu["index"] = (menu["index"] + 1) % len(hotkeys)
         elif ch in ("\n", "\r", curses.KEY_ENTER) or (
                 isinstance(ch, str) and ch.lower() in hotkeys):
             if isinstance(ch, str) and ch.lower() in hotkeys:
-                self.menu = hotkeys.index(ch.lower())
-            action = self.MENU[self.menu][2]
-            self.menu = None
-            if action == "quit":
-                return False
-            if action == "atu":
-                self.atu_tune()
-            elif action == "backup":
-                self.manual_backup()
-            else:
-                self.export(action)
-        elif ch == "\x1b" or ch in ALT_M:
-            self.menu, self.msg = None, "Menu closed."
+                menu["index"] = hotkeys.index(ch.lower())
+            action = menu["items"][menu["index"]][2]
+            self.menus = []
+            return self.menu_action(scr, action)
+        elif ch == "\x1b" or ch == curses.KEY_LEFT:
+            self.menus.pop()                     # back to the parent menu
+            if not self.menus:
+                self.msg = "Menu closed."
+        elif ch in ALT_M:
+            self.menus, self.msg = [], "Menu closed."
         return True
 
     def typed(self, name):
@@ -1679,12 +1994,13 @@ class App:
         if self.prompt:
             self.prompt_key(ch)
             return True
-        if self.menu is not None:
-            return self.menu_key(ch)
+        if self.menus:
+            return self.menu_key(ch, scr)
         if ch == "\x18":            # Ctrl-X: quit without the menu, as a fallback
             return False
         if ch in ALT_M:
-            self.menu, self.msg = 0, "Menu: Up/Down, Enter selects, Esc closes."
+            self.menus = [self.main_menu()]
+            self.msg = "Menu: Up/Down, Enter selects, Esc goes back."
         elif ch == curses.KEY_F6:
             self.spot_send()
         elif ch == curses.KEY_F7:
@@ -2104,18 +2420,24 @@ class App:
         put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
                       "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn panel | "
                       "F6 spot | F7 map | F9 store | F8 delete | "
-                      "Alt-M menu (export, backup, ATU, quit) ".ljust(w - 1),
+                      "Alt-M menu (export, backup, radio, ATU, quit) ".ljust(w - 1),
             curses.A_REVERSE)
-        if self.menu is not None:        # menu box in the middle of the screen
-            width = max(len(title) for _, title, _ in self.MENU) + 10
-            top, left = max((h - len(self.MENU) - 2) // 2, 0), max((w - width) // 2, 0)
-            put(top, left, "+" + " Menu ".center(width - 2, "-") + "+")
-            for i, (hot, title, _) in enumerate(self.MENU):
-                put(top + 1 + i, left, "|" + " " * (width - 2) + "|")
-                put(top + 1 + i, left + 2, f"{hot.upper()}  {title}".ljust(width - 4),
-                    curses.A_REVERSE if i == self.menu else 0)
-            put(top + 1 + len(self.MENU), left, "+" + "-" * (width - 2) + "+")
-            cursor = (top + 1 + self.menu, left + 2)
+        if self.menus:                   # menu box in the middle of the screen
+            menu = self.menus[-1]
+            rows = ([(text, None) for text in menu["info"]]
+                    + ([("", None)] if menu["info"] else [])
+                    + [(f"{hot.upper()}  {title}", i)
+                       for i, (hot, title, _) in enumerate(menu["items"])])
+            width = min(max(len(text) for text, _ in rows) + 6, w - 2)
+            top, left = max((h - len(rows) - 2) // 2, 0), max((w - width) // 2, 0)
+            put(top, left, "+" + f" {menu['title']} ".center(width - 2, "-") + "+")
+            for n, (text, index) in enumerate(rows):
+                put(top + 1 + n, left, "|" + " " * (width - 2) + "|")
+                put(top + 1 + n, left + 2, text[:width - 4].ljust(width - 4),
+                    curses.A_REVERSE if index == menu["index"] else 0)
+                if index == menu["index"]:
+                    cursor = (top + 1 + n, left + 2)
+            put(top + 1 + len(rows), left, "+" + "-" * (width - 2) + "+")
         try:
             scr.move(*cursor)
         except curses.error:
@@ -2136,6 +2458,9 @@ class App:
         curses.curs_set(1)
         scr.keypad(True)
         scr.timeout(200)
+        if self.cfg["rig"].get("rigctld_autostart", "no").strip().lower() in (
+                "yes", "true", "on", "1"):
+            self.msg = self.rigctld.start()
         self.rig.start()
         self.cluster.start()
         while True:
@@ -2209,7 +2534,11 @@ def main():
             print("Cabrillo:", log.export_cabrillo(args.export_cabrillo, cfg))
         return
     app = App(cfg, log)
-    curses.wrapper(app.run)
+    try:
+        curses.wrapper(app.run)
+    finally:
+        if app.rigctld.ours():           # a rigctld we started ends with us
+            print(app.rigctld.stop())
     saved = app.auto_backup(force=True)
     if saved:
         print(f"Backup: {saved}")
