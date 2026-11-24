@@ -441,6 +441,16 @@ appr.rigctld.stop()
 appr.cfg["rig"]["rigctld_device"] = ""; m.detect_radios = lambda: ([], [])
 appr.autostart(); assert "No radio found by scanning either" in appr.msg and not appr.rigctld.ours()
 m.detect_radios = real_detect
+# super check partial
+open(os.path.join(work, "MASTER.SCP"), "w").write("# VER20261101\nDL1ABC\nDL1ABD\nDK1AB\nK1ABC\nW1AB\nEA8/DL1ABX\nOK1XYZ\n")
+cs = m.load_config(work, "wsa"); apps = m.App(cs, m.Log(os.path.join(work, "scp.db")))
+assert apps.partial.path.endswith("MASTER.SCP") and len(apps.partial.calls) == 7
+assert apps.partial.match("1A") == [] and apps.partial.match("zzz") == []
+assert apps.partial.match("1ab") == ["DK1AB", "DL1ABC", "DL1ABD", "EA8/DL1ABX", "K1ABC", "W1AB"]
+assert apps.partial.match("DL1AB") == ["DL1ABC", "DL1ABD", "EA8/DL1ABX"]
+assert apps.partial.match("K1ABC")[0] == "K1ABC" and apps.partial.match("dk1ab")[:1] == ["DK1AB"]
+apps.manual_freq["A"] = 144300000; apps.val["call"] = "DL1ABQ"; apps.enter()   # from this log too
+apps.val["call"] = "L1AB"; assert apps.partial_matches() == ["DL1ABC", "DL1ABD", "DL1ABQ", "EA8/DL1ABX"]
 # periodic backup
 bdir = os.path.join(work, "bk"); c9 = m.load_config(work, "wsa"); c9["backup"]["folder"] = bdir
 c9["backup"]["keep"] = "2"

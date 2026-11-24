@@ -975,6 +975,48 @@ def load_history(cfg):
         sys.exit(f"worked_before file: {exc}")
 
 
+# ----------------------------------------------------------- check partial
+class PartialCheck:
+    """Super check partial: known contest callsigns that contain what has
+    been typed so far. The list comes from a MASTER.SCP file
+    (www.supercheckpartial.com), one callsign per line."""
+    NAMES = ("MASTER.SCP", "master.scp", "MASTER.DTA.SCP")
+
+    def __init__(self, cfg):
+        named = cfg["station"].get("scp_file", "").strip()
+        folders = (cfg["station"].get("config_dir", DEFAULT_CONFIG_DIR),
+                   os.path.dirname(os.path.abspath(__file__)))
+        candidates = [os.path.expanduser(named)] if named else [
+            os.path.join(folder, name) for folder in folders for name in self.NAMES]
+        self.path, self.calls = "", set()
+        for path in candidates:
+            if os.path.exists(path):
+                try:
+                    with open(path, encoding="ascii", errors="ignore") as source:
+                        self.calls = {line.strip().upper() for line in source
+                                      if line.strip() and not line.startswith("#")}
+                    self.path = path
+                except OSError as exc:
+                    sys.exit(f"scp_file {path}: {exc}")
+                break
+        if named and not self.path:
+            sys.exit(f"scp_file {named} not found")
+        self._last = (None, None, [])
+
+    def match(self, text, extra=()):
+        """Callsigns containing the text: the exact one first, then those
+        starting with it, then the rest; each group in alphabetical order."""
+        text = text.upper()
+        if len(text) < 3:
+            return []
+        extra = frozenset(extra)
+        if self._last[:2] != (text, extra):
+            found = [c for c in self.calls | extra if text in c]
+            found.sort(key=lambda c: (c != text, not c.startswith(text), c))
+            self._last = (text, extra, found)
+        return self._last[2]
+
+
 # ----------------------------------------------------------------- cluster
 SPOT_RE = re.compile(r"^DX de\s+([A-Z0-9/#-]+):\s*(\d+(?:\.\d+)?)\s+"
                      r"([A-Z0-9/]+)\s*(.*?)\s*(\d{4})Z", re.I)
@@ -1387,7 +1429,7 @@ def load_config(config_dir, contest):
     """Station data from config.ini, contest data from contests/<name>.ini."""
     cfg = configparser.ConfigParser()
     cfg.read_dict({"station": {"call": "", "email": "", "worked_before": "",
-                               "country_file": ""},
+                               "country_file": "", "scp_file": ""},
                    "qrz": {"username": "", "password": ""},
                    "rig": {"host": "127.0.0.1", "port": "4532",
                            "vfo_switch": "retune", "tune_command": "auto",
@@ -1527,6 +1569,8 @@ class App:
         self.my_loc = my_locator(cfg)
         self.forced_mode = cfg["contest"].get("mode", "").strip().upper()
         self.history = load_history(cfg)
+        self.partial = PartialCheck(cfg)
+        self._logged = (None, frozenset())   # (log state, callsigns in the log)
         self.entry = {v: self.new_entry() for v in "AB"}
         self.row = "A"
         self.manual_freq = {"A": 0, "B": 0}
@@ -2276,6 +2320,15 @@ class App:
                 return True
         return False
 
+    def partial_matches(self):
+        """Check partial for the call field of the active row: callsigns from
+        the SCP file, this log and the worked-before file."""
+        state = self.log.db.total_changes
+        if self._logged[0] != state:
+            self._logged = (state, frozenset(q["call"] for q in self.log.rows())
+                            | frozenset(self.history.calls))
+        return self.partial.match(self.val["call"], self._logged[1])
+
     def score_text(self):
         if not self.scoring["configured"]:
             return ""
@@ -2305,9 +2358,17 @@ class App:
                 f"QSOs: {self.log.count()} | {utc} ")
         put(0, 0, head.ljust(w - 1), curses.A_REVERSE)
 
+        # the panel on the right (cluster / band map) takes the space right
+        # of the list columns, up to 60 columns, so that spot comments fit;
+        # what is left beyond that goes to the names. It runs from the top
+        # down to the message line.
+        panel_w = min(w - 112, 60)
+        panel_x = w - panel_w if w >= 142 else None
+        left_w = panel_x - 2 if panel_x else w - 1    # width left of the panel
+
         # QSO list, with the edited QSO shown as editable cells
         extra = 1 if self.history.path else 0     # line for "worked before"
-        mult_rows = self.mult_panel(w - 2)
+        mult_rows = self.mult_panel(left_w - 1)
         if h - 13 - extra - len(mult_rows) < 3:   # terminal too small for it
             mult_rows = []
         space = max(h - 12 - extra - (len(mult_rows) + 1 if mult_rows else 0), 1)
@@ -2317,11 +2378,6 @@ class App:
                 put(h - 9 - extra - len(mult_rows) + n, x, text,
                     self.good_attr if worked else 0)
                 x += len(text) + 1
-        # DX cluster panel to the right of the QSO list
-        # it takes the space right of the list columns, up to 60 columns, so
-        # that spot comments fit; what is left beyond that goes to the names
-        panel_w = min(w - 112, 60)
-        panel_x = w - panel_w if w >= 142 else None
         head = (f"{'#':>4} " + " ".join(f"{title:<{width}}"
                                          for _, width, title in COLUMNS)
                 + f" {'km':>5} {'Pts':<6}")
@@ -2342,7 +2398,7 @@ class App:
                 line += 1
             elif not spots:
                 put(line, panel_x + 1, "nothing on this band yet")
-            room = space - (line - 3)
+            room = max(h - 2 - line, 1)             # down to the message line
             calls = [spot["call"] for spot in spots]
             kinds = ["here" if spot.get("here") else spot["kind"]
                      for spot in spots]
@@ -2395,7 +2451,7 @@ class App:
         if extra:
             known = self.history.lookup(call) if is_call(call) else None
             if known:
-                put(h - 9, 1, self.history.text(known), curses.A_BOLD)
+                put(h - 9, 1, self.history.text(known)[:left_w - 1], curses.A_BOLD)
             elif is_call(call):
                 put(h - 9, 1, "Worked before: no")
         info = self.qrz.info(call) if is_call(call) else None
@@ -2429,7 +2485,7 @@ class App:
         if land:
             line += (f"   [{land['prefix']} {land['name']}, {land['cont']}, "
                      f"CQ zone {land['cq']}]")
-        put(h - 8, 1, line, curses.A_BOLD)
+        put(h - 8, 1, line[:left_w - 1], curses.A_BOLD)
         dupe = self.dupe()
         if dupe:
             put(h - 7, 1, " " + self.dupe_text(dupe) + " ",
@@ -2464,6 +2520,28 @@ class App:
                     cursor = (line, x + len(entry["val"][name]))
                 x += max(WIDTHS[name], len(LABELS[name])) + 2
             put(line, x, self.exch_sent() or "-")
+
+        # check partial: between the entry fields and the panel
+        scp_x = x + 13
+        scp_w = left_w - scp_x
+        if scp_w >= 14 and not self.edit:
+            matches = self.partial_matches()
+            typed = self.val["call"]
+            title = (f"Check partial ({len(matches)})" if matches
+                     else "Check partial" if len(typed) < 3
+                     else "Check partial: no match")
+            if not self.partial.path and len(typed) < 3:
+                title = "Check partial (no MASTER.SCP)"
+            put(h - 6, scp_x, title[:scp_w], curses.A_BOLD)
+            row, col = h - 5, scp_x
+            for call in matches:
+                if col + len(call) > scp_x + scp_w:
+                    row, col = row + 1, scp_x
+                    if row > h - 3:
+                        break
+                put(row, col, call, curses.A_BOLD | curses.A_UNDERLINE
+                    if call == typed else 0)
+                col += len(call) + 1
 
         if self.prompt:
             line = self.prompt["text"] + self.prompt["value"]

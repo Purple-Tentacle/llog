@@ -13,6 +13,7 @@ settings, and a log you can read with any SQLite tool.
 - Two entry rows, each with its own frequency and mode, to switch between two
   frequencies with one key
 - Dupe checking as you type, with rules set per contest
+- Check partial against the super check partial list of contest callsigns
 - Running numbers in the sent exchange
 - Every part of a logged QSO can be corrected in place
 - Periodic backups, ADIF and Cabrillo export
@@ -176,8 +177,8 @@ first. The command is chosen by `tune_command` in the `[rig]` section:
 
 ## DX cluster and band map
 
-A panel to the right of the QSO list shows what is on the band of the current
-entry row. It follows the band when you QSY or switch rows, and F7 switches
+A panel on the right side of the screen, from the top down to the message
+line, shows what is on the band of the current entry row. It follows the band when you QSY or switch rows, and F7 switches
 between two views:
 
 - **Newest first:** cluster spots and stations you stored for later, newest
@@ -313,6 +314,28 @@ the opposite direction. If a station has no locator but a country file is presen
 QRZ line shows a rough distance and bearing to the middle of its country. The locator of a logged QSO can be changed in the list like any
 other cell. The ADIF export contains `GRIDSQUARE`, `MY_GRIDSQUARE` and
 `DISTANCE`.
+
+## Check partial
+
+While you type a callsign, llog shows known callsigns that contain what you
+have typed so far (from three characters on), to the right of the entry rows.
+It helps to complete a callsign you only copied in part and to catch typing
+errors: a callsign nobody has ever used in a contest is worth a second look.
+If what you typed is itself a known callsign, it comes first and is
+underlined; then callsigns starting with it, then the others. The number in
+the title is the total number of matches, of which as many are shown as fit.
+
+The callsigns come from three places: this contest's log, the worked-before
+file, and a `MASTER.SCP` file, the "super check partial" list of active
+contest callsigns that other contest loggers use as well. Download it from
+www.supercheckpartial.com and save it as `~/.config/llog/MASTER.SCP` (or set
+`scp_file = /path/to/MASTER.SCP` in the `[station]` section of `config.ini`).
+Without that file the check still works with your own log and the
+worked-before file.
+
+Check partial needs a terminal wide enough for it to fit between the entry
+rows and the panel on the right, which is the case from 142 columns on, and
+between about 115 and 141 columns, where no panel is shown.
 
 ## Worked before
 
