@@ -1224,17 +1224,25 @@ class Log:
         self.db.execute("""CREATE TABLE IF NOT EXISTS later (
             call TEXT, band TEXT, freq_hz INTEGER, mode TEXT, seen REAL,
             PRIMARY KEY (call, band))""")
+        have = {row[1] for row in self.db.execute("PRAGMA table_info(later)")}
+        for column in ("exch", "loc"):      # added later: upgrade older logs
+            if column not in have:
+                self.db.execute(f"ALTER TABLE later ADD COLUMN {column} TEXT "
+                                "DEFAULT ''")
         self.db.commit()
 
-    def store_later(self, call, freq_hz, mode):
-        self.db.execute("INSERT OR REPLACE INTO later VALUES (?,?,?,?,?)",
-                        (call, band_of(freq_hz), freq_hz, mode, time.time()))
+    def store_later(self, call, freq_hz, mode, exch="", loc=""):
+        self.db.execute(
+            "INSERT OR REPLACE INTO later (call, band, freq_hz, mode, seen, "
+            "exch, loc) VALUES (?,?,?,?,?,?,?)",
+            (call, band_of(freq_hz), freq_hz, mode, time.time(), exch, loc))
         self.db.commit()
 
     def later_rows(self, band):
-        found = self.db.execute("SELECT call, freq_hz, mode, seen FROM later "
+        names = ("call", "freq_hz", "mode", "seen", "exch", "loc")
+        found = self.db.execute(f"SELECT {', '.join(names)} FROM later "
                                 "WHERE band=?", (band,))
-        return [dict(zip(("call", "freq_hz", "mode", "seen"), r)) for r in found]
+        return [dict(zip(names, r)) for r in found]
 
     def delete_later(self, call, band):
         done = self.db.execute("DELETE FROM later WHERE call=? AND band=?",
@@ -2249,7 +2257,8 @@ class App:
         elif not band_of(self.freq() or 0):
             self.msg = "No amateur band frequency - cannot store."
         else:
-            self.log.store_later(call, self.freq(), self.mode())
+            self.log.store_later(call, self.freq(), self.mode(),
+                                 self.val["exch"].strip(), self.val["loc"])
             self.msg = (f"Stored {call} on {fmt_freq(self.freq())} for later "
                         "(shown with * in the panel).")
             self.clear()
@@ -2313,6 +2322,14 @@ class App:
                         and spot["mode"] != self.mode()):
                     self.set_mode(spot["mode"])
                 self.val["call"] = spot["call"]
+                if spot["kind"] == "stored":
+                    # bring back what was already typed; fields restored
+                    # here count as typed by hand, so QRZ does not replace them
+                    entry = self.entry[self.row]
+                    for name, value in (("exch", spot["exch"]), ("loc", spot["loc"])):
+                        if value:
+                            self.val[name] = value
+                            entry["manual"][name] = spot["call"]
                 self.qrz.request(spot["call"])
                 self.msg = (f"Row {self.row}: {spot['call']} on "
                             f"{fmt_freq(spot['freq_hz'])}")

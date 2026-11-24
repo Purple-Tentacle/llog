@@ -242,6 +242,22 @@ app3.spot = "DL8ZZ"; assert app3.spot_take() and app3.val["call"] == "DL8ZZ"
 assert app3.manual_freq["A"] == 14050000
 app3.enter()                                                 # logging removes "stored"
 assert not app3.log.later_rows("20m") and app3.log.count() == 3
+# a stored station keeps the received exchange and the locator typed so far
+app3.qrz.cache["DL6XX"] = {"name": "", "qth": "", "country": "", "grid": "JO62qm"}
+app3.val.update(call="DL6XX", exch="N07", loc="JN58"); app3.store_for_later()
+assert app3.val == dict.fromkeys(m.FIELDS, "")
+app3.spot = "DL6XX"; assert app3.spot_take()
+app3.sync_prefill()                                          # QRZ must not replace JN58
+assert (app3.val["call"], app3.val["exch"], app3.val["loc"]) == ("DL6XX", "N07", "JN58")
+app3.enter(); assert app3.log.newest()["exch_r"] == "N07" and app3.log.newest()["grid"] == "JN58"
+app3.val["call"] = "DL6XY"; app3.store_for_later(); app3.spot = "DL6XY"; app3.spot_take()
+assert app3.val["exch"] == "" and app3.val["loc"] == ""       # nothing stored, nothing invented
+app3.clear(); app3.spot = "DL6XY"; app3.spot_delete()
+old_db = os.path.join(work, "old.db"); con_old = sqlite3.connect(old_db)   # log from before this change
+con_old.execute("CREATE TABLE later (call TEXT, band TEXT, freq_hz INTEGER, mode TEXT, seen REAL, PRIMARY KEY (call, band))")
+con_old.execute("INSERT INTO later VALUES ('DL5OLD', '20m', 14020000, 'CW', 1.0)"); con_old.commit(); con_old.close()
+assert m.Log(old_db).later_rows("20m") == [{"call": "DL5OLD", "freq_hz": 14020000, "mode": "CW",
+                                            "seen": 1.0, "exch": "", "loc": ""}]
 app3.val["call"] = "DL7YY"; app3.store_for_later(); app3.spot = "DL7YY"
 app3.spot_delete(); assert not app3.log.later_rows("20m")
 app3.toggle_view(); assert app3.view == "newest"

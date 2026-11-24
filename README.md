@@ -195,8 +195,10 @@ Stations you have already worked on that band (by the contest's dupe rules)
 are shown dimmed; stored stations are marked with `*`.
 
 **Storing a station for later.** Type the callsign and press F9 (or Ctrl-J):
-the station is noted on the current frequency and mode and the entry row is
-cleared. Ctrl-Enter does the same in terminals that send it as a key of its
+the station is noted on the current frequency and mode, together with the
+received exchange and the locator if you had already entered them, and the
+entry row is cleared. When you take the station from the panel later, the
+exchange and locator are filled in again. Ctrl-Enter does the same in terminals that send it as a key of its
 own; many send a plain Enter instead, so check what yours does before relying
 on it. Stored stations are kept in the log file, so they survive a restart.
 They disappear when you log the station on that band, or when you highlight
