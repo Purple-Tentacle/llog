@@ -489,6 +489,20 @@ ric._cw = lambda command, *a: sent.append(command); ric.stop_cw(); time.sleep(0.
 assert sent == ["\\stop_morse"]                          # other radios: Hamlib stop
 assert appc.message_text("{call} 5nn {exch}  {nothing} k") == "DL1ABC 5NN 001 N13 K"
 appc.send_message("cw_f1"); assert appc.msg == "Rig offline - cannot send CW."
+# menu switch for "Enter sends message", saved in config.ini
+appr.rig.online, appr.rig.mode["A"], sent_cw = True, "CW", []
+appr.rig.send_cw = sent_cw.append
+appr.cfg["contest"]["cw_enter"] = "{MYCALL} QRZ"
+assert appr.enter_sends(); appr.enter(); assert sent_cw == ["DA2IT QRZ"]
+appr.menus = [appr.main_menu()]; assert appr.menus[0]["items"][4][1] == "Enter sends message: on (change)"
+appr.menu_key("e"); assert not appr.enter_sends() and "no longer sends" in appr.msg
+appr.enter(); assert sent_cw == ["DA2IT QRZ"] and appr.msg == "Not a valid callsign."
+saved.read(os.path.join(cdir, "config.ini")); assert saved["cw"]["enter_sends"] == "no"
+assert not m.App(m.load_config(cdir, "t"), m.Log(os.path.join(work, "r2.db"))).enter_sends()   # kept
+appr.menus = [appr.main_menu()]; assert "off" in appr.menus[0]["items"][4][1]
+appr.menu_key("e"); appr.enter(); assert sent_cw == ["DA2IT QRZ"] * 2
+appr.send_message("cw_f1"); assert len(sent_cw) == 3            # F1 is not affected by the switch
+appr.rig.online = False
 # periodic backup
 bdir = os.path.join(work, "bk"); c9 = m.load_config(work, "wsa"); c9["backup"]["folder"] = bdir
 c9["backup"]["keep"] = "2"

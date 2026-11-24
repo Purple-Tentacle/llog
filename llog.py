@@ -1475,6 +1475,7 @@ def load_config(config_dir, contest):
                    "cluster": {"host": "", "port": "7300", "minutes": "30",
                                "call": ""},
                    "backup": {"minutes": "5", "keep": "50", "folder": ""},
+                   "cw": {"enter_sends": "yes"},
                    "contest": {"contest": "", "exchange_sent": "",
                                "category_operator": "SINGLE-OP",
                                "email": "", "specific": "",
@@ -1804,7 +1805,7 @@ class App:
         call = self.val["call"]
         if self.focus == 0 and not call and self.spot and self.spot_take():
             pass
-        elif (not call and self.cw_ready()
+        elif (not call and self.enter_sends() and self.cw_ready()
               and self.cfg["contest"].get("cw_enter", "").strip()):
             self.send_message("cw_enter")    # empty call field in CW: "QRZ?"
         elif self.focus == 0 and parse_freq(call) and not is_call(call):
@@ -1971,9 +1972,11 @@ class App:
     # ---- menu (Alt-M)
     # a menu is a dict: title, items [(hotkey, text, action)], index, info lines
     def main_menu(self):
+        enter = "on" if self.enter_sends() else "off"
         return {"title": "Menu", "index": 0, "info": [], "items": [
             ("a", "Export ADIF", "adif"), ("c", "Export Cabrillo", "cabrillo"),
             ("b", "Backup now", "backup"), ("r", "Radio / rigctld ...", "radio"),
+            ("e", f"Enter sends message: {enter} (change)", "enter_sends"),
             ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit")]}
 
     def radio_menu(self):
@@ -1987,6 +1990,22 @@ class App:
                           ("x", "Stop rigctld", "rig_stop"),
                           ("o", f"Start with llog: {auto} (change)", "rig_auto")]}
 
+    def enter_sends(self):
+        """Whether Enter in an empty call field sends the cw_enter message."""
+        return self.cfg["cw"].get("enter_sends", "yes").strip().lower() in (
+            "yes", "true", "on", "1")
+
+    def save_setting(self, section, **values):
+        """Stores settings in config.ini and in the running config."""
+        path = os.path.join(self.cfg["station"].get("config_dir",
+                                                    DEFAULT_CONFIG_DIR), "config.ini")
+        self.cfg[section].update(values)
+        try:
+            set_ini_values(path, section, values)
+            return ""
+        except OSError as exc:
+            return f" (not saved to config.ini: {exc.strerror or exc})"
+
     def atu_tune(self):
         if self.rig.online:
             self.msg = "ATU tune ..."
@@ -1997,15 +2016,7 @@ class App:
             self.msg = "Rig offline - cannot start ATU tune."
 
     def save_rig(self, **values):
-        """Stores rigctld settings in config.ini and in the running config."""
-        path = os.path.join(self.cfg["station"].get("config_dir",
-                                                    DEFAULT_CONFIG_DIR), "config.ini")
-        self.cfg["rig"].update(values)
-        try:
-            set_ini_values(path, "rig", values)
-            return ""
-        except OSError as exc:
-            return f" (not saved to config.ini: {exc.strerror or exc})"
+        return self.save_setting("rig", **values)
 
     def use_radio(self, radio):
         number = self.rigctld.model_number(radio["radio"])
@@ -2071,9 +2082,15 @@ class App:
             return False
         elif action == "radio":
             self.menus = [self.main_menu(), self.radio_menu()]
-            self.menus[0]["index"] = 3
+            self.menus[0]["index"] = 3           # Esc returns to "Radio"
         elif action == "atu":
             self.atu_tune()
+        elif action == "enter_sends":
+            new = "no" if self.enter_sends() else "yes"
+            problem = self.save_setting("cw", enter_sends=new)
+            self.msg = ("Enter in an empty call field "
+                        + ("sends the CW message again" if new == "yes"
+                           else "no longer sends a CW message") + f"{problem}.")
         elif action == "backup":
             self.manual_backup()
         elif action == "detect":

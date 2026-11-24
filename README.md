@@ -195,6 +195,11 @@ message: Elecraft radios are sent their own back-to-receive command, other
 radios Hamlib's stop command. An empty `cw_f1 =` or
 `cw_enter =` switches that message off for a contest.
 
+The menu entry "Enter sends message" (Alt-M, then E) switches the Enter
+message off and on for all contests, for times when an accidental Enter must
+not transmit. It is on by default, and the choice is kept in `config.ini`
+(`enter_sends` in the `[cw]` section). F1 is not affected.
+
 ## ATU tune
 
 "ATU tune" in the menu (Alt-M, then T) starts an antenna tuner cycle on the
@@ -535,7 +540,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | Esc | Clear the entry line |
 | `<frequency>` Enter | QSY (`7030.5` = kHz, below 1000 = MHz, e.g. `144.3`) |
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
-| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ATU tune, quit |
+| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, Enter message on/off, ATU tune, quit |
 | `\` | Switch to the other entry row (A/B) |
 | PgDn / PgUp | Highlight a station in the panel; Enter in an empty call field takes it |
 | F7 | Switch the panel between newest first and band map |
@@ -550,8 +555,8 @@ The score is your claimed score; the organiser's evaluation is what counts.
 
 Alt-M opens a small menu in the middle of the screen. Up and Down move, Enter
 selects, Esc goes back one level or closes it; the letter in front of an entry selects it directly
-(`A` for ADIF, `C` for Cabrillo, `B` for a backup, `T` for ATU tune, `Q` to
-quit). The exports are written
+(`A` for ADIF, `C` for Cabrillo, `B` for a backup, `R` for the radio menu,
+`E` for the Enter message switch, `T` for ATU tune, `Q` to quit). The exports are written
 next to the log file and the message line shows the file name.
 
 ### Editing a QSO
