@@ -520,6 +520,20 @@ appr.enter(); assert sent_cw[-1] == "TU DA2IT" and appr.log.count() == 4
 appr.cfg["contest"]["cw_tu"] = ""                                  # a message switched off
 appr.val["call"] = "DJ1AA"; appr.enter(); appr.val["exch"] = "X"; n = len(sent_cw); appr.enter()
 assert len(sent_cw) == n and appr.log.count() == 5
+# esm_work_dupes = no: a dupe is told QSO B4; a further Enter works it anyway
+appr.esm_work_dupes = False; n_log = appr.log.count(); appr.cfg["contest"]["cw_tu"] = "TU {MYCALL}"
+appr.val["call"] = "DK5ZZ"; appr.enter()
+assert sent_cw[-1] == "DK5ZZ QSO B4" and "told him" in appr.msg and appr.log.count() == n_log
+appr.enter(); assert sent_cw[-1].startswith("DK5ZZ 5NN ")       # insisted: normal exchange
+appr.val["exch"] = "H01"; appr.enter()                           # no second dupe question
+assert sent_cw[-1] == "TU DA2IT" and appr.log.count() == n_log + 1
+appr.val["call"] = "DL7NEW"; appr.enter(); assert sent_cw[-1].startswith("DL7NEW 5NN ")   # no dupe
+appr.clear(); appr.esm_mode = "sp"; n = len(sent_cw)
+appr.val["call"] = "DK5ZZ"; appr.enter()
+assert len(sent_cw) == n and "not calling" in appr.msg           # S&P: no transmission
+appr.enter(); assert sent_cw[-1] == "DA2IT"                      # second Enter calls anyway
+appr.clear(); appr.esm_mode = "run"; appr.esm_work_dupes = True
+appr.cfg["contest"]["cw_tu"] = ""; appr.log.delete(appr.log.newest()["id"])   # as before this block
 # search & pounce, from the menu
 appr.menus = [appr.main_menu()]; assert appr.menus[0]["items"][5][1] == "Operating: Run, calling CQ (change)"
 appr.menu_key("s"); assert appr.esm_mode == "sp" and "Search & pounce" in appr.msg

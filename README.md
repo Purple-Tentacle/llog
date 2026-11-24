@@ -205,8 +205,13 @@ Details:
   sends your exchange, and the next one closes and logs.
 - A running number is fixed when it is first sent and stays with that QSO
   until it is logged; the other entry row gets the next number meanwhile.
-- A dupe gets the usual warning on the Enter that would log it; press Enter
-  again to send the closing message and log it anyway.
+- Dupes: by default a station you have already worked is handled like any
+  other caller, and you get the usual warning on the Enter that would log
+  it; press Enter again to send the closing message and log it anyway. With
+  `esm_work_dupes = no` in the contest file, the first Enter on a dupe sends
+  `cw_dupe` (`DL1ABC QSO B4`) and no exchange when you are running, and
+  sends nothing when you search and pounce. A second Enter works the station
+  anyway, for the caller who insists.
 - `esm_required` in the contest file names the fields that must be filled
   before Enter logs: `exch` (default), `loc`, both, or nothing. With nothing
   required, the second Enter always logs.
@@ -221,6 +226,8 @@ cw_again = AGN
 cw_tu = TU {MYCALL}
 cw_mycall = {MYCALL}
 cw_sp_exchange = TU 5NN {EXCH}
+cw_dupe = {CALL} QSO B4
+esm_work_dupes = yes
 esm_required = exch
 esm_start = run
 ```

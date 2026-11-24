@@ -1494,6 +1494,8 @@ def load_config(config_dir, contest):
                                "cw_again": "AGN", "cw_tu": "TU {MYCALL}",
                                "cw_mycall": "{MYCALL}",
                                "cw_sp_exchange": "TU 5NN {EXCH}",
+                               "cw_dupe": "{CALL} QSO B4",
+                               "esm_work_dupes": "yes",
                                "esm_required": "exch", "esm_start": "run",
                                "mode": "", "category_band": "",
                                "category_mode": "", "category_power": ""}})
@@ -1627,6 +1629,10 @@ class App:
         self.esm_mode = con.get("esm_start", "run").strip().lower()   # run / sp
         self.esm_required = con.get("esm_required", "exch").lower().replace(
             ",", " ").split()
+        try:
+            self.esm_work_dupes = con.getboolean("esm_work_dupes", True)
+        except ValueError:
+            sys.exit("Contest file: esm_work_dupes must be yes or no")
         if self.esm_mode not in ("run", "sp") or set(self.esm_required) - {"exch", "loc"}:
             sys.exit("Contest file: esm_start must be run or sp, esm_required "
                      "a list of exch and loc (or empty)")
@@ -1707,8 +1713,10 @@ class App:
         # manual: field -> callsign for which it was edited by hand
         # esm_sent: callsign for which the exchange has gone out (ESM, Run)
         # esm_exch: the exchange that went out, kept until the QSO is logged
+        # dupe_told: callsign that was told "QSO B4" (esm_work_dupes = no)
         return {"val": dict.fromkeys(FIELDS, ""), "focus": 0, "dupe_ok": "",
-                "auto": {}, "manual": {}, "esm_sent": "", "esm_exch": ""}
+                "auto": {}, "manual": {}, "esm_sent": "", "esm_exch": "",
+                "dupe_told": ""}
 
     def clear(self):
         self.entry[self.row] = self.new_entry()
@@ -1866,6 +1874,18 @@ class App:
               required fields there -> my exchange (cw_sp_exchange), QSO logged
         """
         entry = self.entry[self.row]
+        if (not self.esm_work_dupes and entry["dupe_told"] != call
+                and not entry["esm_sent"] and self.dupe()):
+            # worked before: say so instead of starting the QSO. A further
+            # Enter works the station anyway, without asking again.
+            entry["dupe_told"] = self.dupe_ok = call
+            text = self.dupe_text(self.dupe())
+            if self.esm_mode == "run":
+                self.send_message("cw_dupe", quiet=True)
+                self.msg = text + " - told him. Enter again works him anyway."
+            else:
+                self.msg = text + " - not calling. Enter again calls anyway."
+            return
         missing = [f for f in self.esm_required if not self.val[f].strip()]
         if not entry["esm_exch"]:
             # the exchange (running number) stays the same for this QSO
