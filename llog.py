@@ -610,6 +610,7 @@ class Rigctld:
     def __init__(self, cfg):
         self.cfg = cfg
         self.proc = None
+        self.radio_missing = False
         self.log_path = os.path.join(
             cfg["station"].get("config_dir", DEFAULT_CONFIG_DIR), "rigctld.log")
 
@@ -646,13 +647,20 @@ class Rigctld:
         return "running (started elsewhere)" if self.reachable() else "not running"
 
     def start(self):
-        """Returns a text for the message line."""
+        """Returns a text for the message line. self.radio_missing tells
+        whether a failure looks like 'the saved radio is not there'."""
         rig = self.cfg["rig"]
         device = rig.get("rigctld_device", "").strip()
+        self.radio_missing = False
         if self.ours() or self.reachable():
             return "rigctld is already running."
         if not device:
+            self.radio_missing = True
             return "No radio set up yet: menu > Radio > Detect radio."
+        if not os.path.exists(device):
+            self.radio_missing = True
+            return (f"The saved radio ({self.describe()}) is not connected: "
+                    "menu > Radio > Detect radio.")
         if rig["host"] not in ("127.0.0.1", "localhost", "::1"):
             return "rigctld host in config.ini is another computer - not started."
         command = rig.get("rigctld_command", "rigctld").strip() or "rigctld"
@@ -678,6 +686,7 @@ class Rigctld:
         end = time.time() + 4
         while time.time() < end:
             if self.proc.poll() is not None:
+                self.radio_missing = True        # wrong radio or switched off
                 return "rigctld stopped at once: " + self.last_log_line()
             if self.reachable():
                 return f"rigctld started ({self.describe()})."
@@ -1897,10 +1906,34 @@ class App:
             self.msg = ("No radio found: " + hint + ". Is it switched on and "
                         "connected? (KX2: menu RS232 not OFF)")
 
+    def autostart(self, scr=None):
+        """Start of llog with 'Start with llog: on': start rigctld with the
+        saved settings; only if the saved radio is not there, look for one."""
+        self.msg = self.rigctld.start()
+        if not self.rigctld.radio_missing:
+            return
+        first = self.msg
+        self.msg = "Saved radio not found - looking for a radio ..."
+        if scr:
+            self.draw(scr)
+        found, notes = detect_radios()
+        if len(found) == 1:
+            self.use_radio(found[0])
+            self.msg = self.rigctld.start()
+        elif found:
+            self.menus = [{"title": "Which radio?", "index": 0, "info": [], "items": [
+                (str(i), f"{r['radio']} on {os.path.basename(r['device'])[:40]}",
+                 ("pick_start", r)) for i, r in enumerate(found, 1)]}]
+            self.msg = "Several radios found - choose one."
+        else:
+            self.msg = first + " No radio found by scanning either."
+
     def menu_action(self, scr, action):
         """Returns False to quit."""
         if isinstance(action, tuple):            # ("pick", radio)
             self.use_radio(action[1])
+            if action[0] == "pick_start":
+                self.msg = self.rigctld.start()
         elif action == "quit":
             return False
         elif action == "radio":
@@ -2460,7 +2493,7 @@ class App:
         scr.timeout(200)
         if self.cfg["rig"].get("rigctld_autostart", "no").strip().lower() in (
                 "yes", "true", "on", "1"):
-            self.msg = self.rigctld.start()
+            self.autostart(scr)
         self.rig.start()
         self.cluster.start()
         while True:

@@ -53,6 +53,12 @@ serial adapter that is plugged in; unplug other serial devices first if they
 might react to that. If several radios are found, llog asks which one to
 use. Detection needs the serial port for itself, so stop `rigctld` first.
 
+**Start with llog.** With this switched on, llog starts `rigctld` with the
+saved settings and does not scan. Only if that fails because the saved radio
+is not there (its USB device is missing, or `rigctld` gives up at once) does
+llog look for a radio, save what it finds and start `rigctld` for it. With
+several radios connected it asks which one to use.
+
 **Running.** A `rigctld` started by llog is stopped again when llog quits.
 Its messages go to `~/.config/llog/rigctld.log`; if it stops right after the
 start, the message line shows the last line of that file. If a `rigctld` is

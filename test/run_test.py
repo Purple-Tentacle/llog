@@ -421,6 +421,23 @@ appr.menus = [appr.radio_menu()]; appr.menu_key("o")
 saved.read(os.path.join(cdir, "config.ini")); assert saved["rig"]["rigctld_autostart"] == "yes"
 m.detect_radios = lambda: ([], ["ttyUSB0: Permission denied"]); appr.menus = [appr.radio_menu()]; appr.menu_key("d")
 assert "dialout" in appr.msg
+# automatic start: no scan while the saved radio works, a scan only when it is missing
+scans = []
+m.detect_radios = lambda: (scans.append(1), ([radios[0]], []))[1]
+appr.cfg["rig"]["rigctld_model"] = "2044"; appr.autostart()
+assert appr.rigctld.ours() and not scans and "started" in appr.msg
+appr.rigctld.stop()
+appr.cfg["rig"]["rigctld_device"] = os.path.join(byid, "usb-unplugged-if00")   # other radio now
+appr.autostart()
+assert scans == [1] and appr.rigctld.ours() and "started (KX2" in appr.msg
+assert appr.cfg["rig"]["rigctld_device"] == radios[0]["device"]
+appr.rigctld.stop()
+appr.cfg["rig"]["rigctld_device"] = ""; m.detect_radios = lambda: (radios, [])   # two radios
+appr.autostart(); assert appr.menus[-1]["title"] == "Which radio?" and not appr.rigctld.ours()
+appr.menu_key("1"); assert appr.rigctld.ours() and not appr.menus
+appr.rigctld.stop()
+appr.cfg["rig"]["rigctld_device"] = ""; m.detect_radios = lambda: ([], [])
+appr.autostart(); assert "No radio found by scanning either" in appr.msg and not appr.rigctld.ours()
 m.detect_radios = real_detect
 # periodic backup
 bdir = os.path.join(work, "bk"); c9 = m.load_config(work, "wsa"); c9["backup"]["folder"] = bdir
