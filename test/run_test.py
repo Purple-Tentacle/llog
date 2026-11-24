@@ -177,7 +177,7 @@ assert "F 7030500" in state["cmds"] and "M LSB 0" in state["cmds"], state["cmds"
 for name in sorted(os.listdir(work)):
     if name.endswith((".adi", ".cbr")):
         print("-----", name); print(open(os.path.join(work, name)).read())
-assert b"RIG ok" in screen
+assert b"| KX2 |" in screen                    # radio name from rigctld in the header
 
 spec = importlib.util.spec_from_file_location("llog", APP)
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)

@@ -1,23 +1,76 @@
 # llog
 
-A very simple Linux terminal logger for amateur radio contests.
-One Python file, standard library only, nothing to compile.
+A contest logger for the Linux terminal: keyboard-driven, fast to start, and
+built around the way a single operator works a contest with one radio.
 
-- Callsign entry with QRZ.com lookup (XML API, needs a QRZ XML subscription for full data)
-- Live frequency and mode from the radio through Hamlib's `rigctld`
-- Typing a frequency in the logger tunes the radio
-- Two entry rows with their own frequency and mode
-- DX cluster panel and band map for the current band, with stations stored for later
-- Locator field with distance and bearing to each station
-- "Worked before" information from an ADIF logbook file
-- SQLite log file, ADIF and Cabrillo export
+llog began as a very small logger for two local VHF activity evenings. It has
+grown into a complete contest tool, but the idea is unchanged: one Python
+file, nothing to install or compile besides Hamlib, plain text files for all
+settings, and a log you can read with any SQLite tool.
 
-Dupe checking and scoring are configurable per contest.
+**Logging**
+
+- Two entry rows, each with its own frequency and mode, to switch between two
+  frequencies with one key
+- Dupe checking as you type, with rules set per contest
+- Running numbers in the sent exchange
+- Every part of a logged QSO can be corrected in place
+- Periodic backups, ADIF and Cabrillo export
+
+**Scoring**
+
+- Live score with points and multipliers, defined per contest in a small
+  text file: points by mode, band and continent; multipliers from the
+  exchange, callsign prefixes, DXCC countries or individual stations
+- A panel of worked and missing multipliers, and a hint when the station you
+  are entering is a new one
+- Ready-made contest files for WNA, WSA, the DARC CW-Ausbildungscontest and
+  the OK DX RTTY Contest
+
+**Radio**
+
+- Live frequency and mode through Hamlib's `rigctld`; typing a frequency or
+  mode in the logger tunes the radio
+- llog finds the radio on the USB ports, configures `rigctld` and starts it
+- Tested with an Elecraft KX2; an Icom IC-705 is supported but untested
+
+**Information while you operate**
+
+- QRZ.com lookup with name, location and locator
+- Distance and beam heading (short and long path) from your locator
+- Country, continent and CQ zone from a country file
+- Whether you have worked the station before, from your main logbook (ADIF)
+- DX cluster with a newest-first list and a band map, stations you noted to
+  come back to, and sending your own spots
+
+**What it does not do**
+
+llog logs and scores; it does not key CW, play voice messages or decode
+digital modes. It is made for one operator and one radio, so there is no
+networking between computers and no two-radio (SO2R) operation.
 
 ## Requirements
 
-- Python 3.9 or newer
-- Hamlib (`rigctld`), e.g. `sudo apt install libhamlib-utils`
+- Linux and a terminal; about 100 columns for logging, 142 or more for the
+  DX cluster and band map panel
+- Python 3.9 or newer (standard library only)
+- Hamlib for radio control, e.g. `sudo apt install libhamlib-utils`
+- Optional: a QRZ.com XML subscription for full lookup data, a `cty.dat`
+  country file for country-based scoring, a DX cluster node
+
+## Quick start
+
+```
+git clone https://github.com/Purple-Tentacle/llog
+cd llog
+mkdir -p ~/.config/llog/contests
+cp examples/wsa.ini ~/.config/llog/contests/     # then enter your DOK in it
+python3 llog.py wsa
+```
+
+The first start asks for your callsign and QRZ login. Then connect the radio
+and press Alt-M, R, D to detect it and Alt-M, R, S to start `rigctld`. Type a
+callsign, Space, the exchange, Enter: that is a QSO.
 
 ## Usage
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""llog - a very simple terminal contest logger.
+"""llog - a contest logger for the Linux terminal.
 
 Needs only Python 3.9+ (standard library). Radio control goes through
-Hamlib's rigctld, callsign lookup through the QRZ.com XML API.
+Hamlib's rigctld, which llog can set up and start itself; callsign lookup
+through the QRZ.com XML API. See README.md.
 
-    rigctld -m <model> -r /dev/ttyUSB0 -s 38400 &
     python3 llog.py <contest> [logfile.db]
 """
 import argparse
@@ -749,6 +749,7 @@ class Rig(threading.Thread):
         self.online = False
         self.error = ""
         self.tune_info = ""                     # result of the last tune()
+        self.model = ""                         # radio name reported by rigctld
         self._todo = queue.Queue()
         self._lock = threading.Lock()
         self._sock = None
@@ -797,14 +798,21 @@ class Rig(threading.Thread):
                 pass
             return data.decode("utf-8", "replace")
 
+    def _identify(self):
+        """Asks rigctld which radio it controls (shown in the header)."""
+        try:
+            caps = self._raw("\\dump_caps", until=b"Mfg name")
+        except OSError:
+            return ""
+        for line in caps.splitlines():
+            if line.startswith("Model name:"):
+                self.model = line.split(":", 1)[1].strip()
+        return self.model
+
     def _tune(self, command):
         try:
             if command == "auto":
-                caps = self._raw("\\dump_caps", until=b"Mfg name")
-                model = ""
-                for line in caps.splitlines():
-                    if line.startswith("Model name:"):
-                        model = line.split(":", 1)[1].strip()
+                model = self.model or self._identify()
                 command = self.TUNE_COMMANDS.get(
                     model.upper(),
                     "G currVFO TUNE" if self.vfo_mode else "G TUNE")
@@ -855,6 +863,8 @@ class Rig(threading.Thread):
                 if self._sock is None:
                     self._sock = socket.create_connection(self.addr, timeout=2)
                     self._file = self._sock.makefile("r")
+                    self.model = ""
+                    threading.Thread(target=self._identify, daemon=True).start()
                     answer = self._ask("\\chk_vfo") or ""
                     self.vfo_mode = answer.endswith("1")
                 while not self._todo.empty():
@@ -2286,7 +2296,8 @@ class App:
                 except curses.error:
                     pass
 
-        rig = "RIG ok" if self.rig.online else "RIG offline (manual)"
+        rig = (self.rig.model or "RIG ok") if self.rig.online \
+            else "RIG offline (manual)"
         utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") + "Z"
         head = (f" {self.mycall} {self.cfg['contest']['contest']} | "
                 f"Row {self.row} {band_of(self.freq() or 0) or '-'} "
@@ -2539,7 +2550,7 @@ class App:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Simple terminal contest logger")
+    ap = argparse.ArgumentParser(description="Contest logger for the terminal")
     ap.add_argument("contest", nargs="?",
                     help="contest name (config in contests/<name>.ini) "
                          "or path to a contest .ini file")
