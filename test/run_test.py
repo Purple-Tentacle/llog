@@ -116,7 +116,7 @@ def send(s, wait=0.6):
 pump(1.5)
 send("dl1abc/p"); send(" "); send("o05"); send("\r")          # QSO 1 on 14060 CW
 send("\x1bOP", 1.0)                                           # F1 in CW: sends the CQ message
-assert "b CQ TEST DA2IT DA2IT" in state["cmds"]
+assert "b CQ TEST DA2IT DA2IT K" in state["cmds"]
 send("\x1b")                                                  # Esc right after: stop sending
 send("dl1abc/p\r"); assert b"DUPE" in screen                 # dupe: 1st Enter warns
 send("\x1b")                                                 # Esc, not logged
@@ -476,10 +476,13 @@ assert apps.partial.match("K1ABC")[0] == "K1ABC" and apps.partial.match("dk1ab")
 apps.manual_freq["A"] = 144300000; apps.val["call"] = "DL1ABQ"; apps.enter()   # from this log too
 apps.val["call"] = "L1AB"; assert apps.partial_matches() == ["DL1ABC", "DL1ABD", "DL1ABQ", "EA8/DL1ABX"]
 # CW message placeholders
-assert "\\stop_morse" in state["cmds"]
+assert "w RX;" in state["cmds"]                    # the fake radio reports itself as KX2
 ccw = m.load_config(work, os.path.join(EX, "darc-cwa.ini")); ccw["contest"]["exchange_sent"] = "# N13"
 appc = m.App(ccw, m.Log(os.path.join(work, "cw.db"))); appc.val["call"] = "dl1abc"
-assert appc.message_text(ccw["contest"]["cw_f1"]) == "CQ TEST DA2IT DA2IT"
+assert appc.message_text(ccw["contest"]["cw_f1"]) == "CQ TEST DA2IT DA2IT K"
+ric = m.Rig("127.0.0.1", 1); ric.model = "IC-705"; sent = []
+ric._cw = lambda command, *a: sent.append(command); ric.stop_cw(); time.sleep(0.2)
+assert sent == ["\\stop_morse"]                          # other radios: Hamlib stop
 assert appc.message_text("{call} 5nn {exch}  {nothing} k") == "DL1ABC 5NN 001 N13 K"
 appc.send_message("cw_f1"); assert appc.msg == "Rig offline - cannot send CW."
 # periodic backup

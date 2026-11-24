@@ -172,7 +172,7 @@ text itself at its own keyer speed; llog only hands it over through
 `rigctld`. Set the text in the contest file:
 
 ```
-cw_f1 = CQ TEST {MYCALL} {MYCALL}
+cw_f1 = CQ TEST {MYCALL} {MYCALL} K
 ```
 
 | Placeholder | Replaced by |
@@ -182,8 +182,9 @@ cw_f1 = CQ TEST {MYCALL} {MYCALL}
 | `{EXCH}` | the exchange you send, including a running number |
 
 F1 only sends when the radio is in CW; in any other mode nothing is
-transmitted and the message line says so. Esc shortly after F1 asks the radio
-to stop sending. An empty `cw_f1 =` switches the key off for a contest.
+transmitted and the message line says so. Esc shortly after F1 stops the
+message: Elecraft radios are sent their own back-to-receive command, other
+radios Hamlib's stop command. An empty `cw_f1 =` switches the key off for a contest.
 
 ## ATU tune
 

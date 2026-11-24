@@ -784,20 +784,26 @@ class Rig(threading.Thread):
         threading.Thread(target=self._cw, args=(f"b{self._vfo_arg(self.vfo)} {text}",
                                                 f"CW: {text}"), daemon=True).start()
 
-    def stop_cw(self):
-        threading.Thread(target=self._cw, args=("\\stop_morse", "CW stopped."),
-                         daemon=True).start()
+    ELECRAFT = ("KX2", "KX3", "K3", "K3S", "K4")
 
-    def _cw(self, command, done):
+    def stop_cw(self):
+        """Ends a CW message that is being sent. Elecraft radios get their
+        own 'back to receive' command, which also empties the text buffer;
+        other radios Hamlib's stop_morse."""
+        command = "w RX;" if self.model.upper() in self.ELECRAFT else "\\stop_morse"
+        threading.Thread(target=self._cw, args=(command, "CW stopped.",
+                                                "CW not stopped"), daemon=True).start()
+
+    def _cw(self, command, done, failed="CW not sent"):
         try:
             with socket.create_connection(self.addr, timeout=30) as sock:
                 sock.sendall((command + "\n").encode())
                 answer = sock.recv(200).decode("ascii", "replace").strip()
         except OSError as exc:
-            self.tune_info = f"CW not sent: {exc}"
+            self.tune_info = f"{failed}: {exc}"
             return
         self.tune_info = done if answer in ("", "RPRT 0") else (
-            f"CW not sent: rigctld answered {answer} - is the radio in CW?")
+            f"{failed}: rigctld answered {answer}")
 
     def tune(self, command="auto"):
         """Starts an ATU tune cycle. Runs on its own connection so that a
@@ -1481,7 +1487,7 @@ def load_config(config_dir, contest):
                                "serial_start": "1", "worked_before": "",
                                "mult_country": "no", "mult_calls": "",
                                "mult_prefix": "no", "mult_exclude": "",
-                               "cw_f1": "CQ TEST {MYCALL} {MYCALL}",
+                               "cw_f1": "CQ TEST {MYCALL} {MYCALL} K",
                                "mode": "", "category_band": "",
                                "category_mode": "", "category_power": ""}})
     station_file = os.path.join(config_dir, "config.ini")
