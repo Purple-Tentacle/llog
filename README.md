@@ -46,8 +46,9 @@ settings, and a log you can read with any SQLite tool.
 
 **What it does not do**
 
-llog logs and scores; it does not key CW, play voice messages or decode
-digital modes. It is made for one operator and one radio, so there is no
+llog logs and scores. It can have the radio send one CW message (a CQ call
+on F1), but it is not a CW keyer with a full set of messages, and it does not
+play voice messages or decode digital modes. It is made for one operator and one radio, so there is no
 networking between computers and no two-radio (SO2R) operation.
 
 ## Requirements
@@ -163,6 +164,26 @@ work.
 
 Both of your rows share one receiver; this is quick switching between two
 frequencies or modes, not listening to both.
+
+## CW message (F1)
+
+F1 lets the radio send a CW message, by default a CQ call. The radio keys the
+text itself at its own keyer speed; llog only hands it over through
+`rigctld`. Set the text in the contest file:
+
+```
+cw_f1 = CQ TEST {MYCALL} {MYCALL}
+```
+
+| Placeholder | Replaced by |
+| --- | --- |
+| `{MYCALL}` | your callsign |
+| `{CALL}` | the callsign in the call field |
+| `{EXCH}` | the exchange you send, including a running number |
+
+F1 only sends when the radio is in CW; in any other mode nothing is
+transmitted and the message line says so. Esc shortly after F1 asks the radio
+to stop sending. An empty `cw_f1 =` switches the key off for a contest.
 
 ## ATU tune
 
@@ -477,6 +498,7 @@ prefix (`EA8/DL1ABC` is Canary Islands); `/MM` has no country.
 | Option | Example | Meaning |
 | --- | --- | --- |
 | `call` | `OK/DA2IT` | Callsign for this contest, if it differs from the one in `config.ini` |
+| `cw_f1` | `CQ TEST {MYCALL}` | CW message sent by F1 |
 | `mode` | `RTTY` | Log every QSO with this mode, whatever the radio reports (useful when the radio is in a generic data mode) |
 | `category_band`, `category_mode`, `category_power` | `ALL`, `RTTY`, `LOW` | Written as `CATEGORY-BAND` etc. into the Cabrillo header |
 
@@ -496,6 +518,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 | Key | Action |
 | --- | --- |
 | Enter | Log the QSO |
+| F1 | Send the CW message of the contest file (a CQ call by default); only in CW |
 | Tab / Shift-Tab | Next / previous field |
 | Space | Jump from callsign to exchange |
 | Esc | Clear the entry line |

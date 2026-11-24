@@ -33,6 +33,8 @@ def fake_client(conn):
                              b"Mfg name:\tElecraft\n")
             elif line.startswith("w "):
                 conn.sendall(b"\n")
+            elif line.startswith("b ") or line == "\\stop_morse":
+                conn.sendall(b"RPRT 0\n")
             elif line.startswith("V VFO"):
                 state["vfo"] = line[-1]; conn.sendall(b"RPRT 0\n")
             elif line.startswith("F "):
@@ -113,10 +115,16 @@ def send(s, wait=0.6):
 
 pump(1.5)
 send("dl1abc/p"); send(" "); send("o05"); send("\r")          # QSO 1 on 14060 CW
+send("\x1bOP", 1.0)                                           # F1 in CW: sends the CQ message
+assert "b CQ TEST DA2IT DA2IT" in state["cmds"]
+send("\x1b")                                                  # Esc right after: stop sending
 send("dl1abc/p\r"); assert b"DUPE" in screen                 # dupe: 1st Enter warns
 send("\x1b")                                                 # Esc, not logged
 send("7030.5\r", 1.2)                                         # QSY via logger
 send("ssb\r", 1.2)                                            # mode via logger
+n_cw = sum(c.startswith("b ") for c in state["cmds"])
+send("\x1bOP")                                                # F1 in SSB: refused
+assert sum(c.startswith("b ") for c in state["cmds"]) == n_cw and b"not CW - nothing sent" in screen
 send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\t"); send("jo40\r")   # QSO 2 with RSTs and locator
 send("oops1x\r"); send("\x1b[19~"); send("y")                 # QSO 3, F8 delete
 UP, BTAB = "\x1bOA", "\x1b[Z"
@@ -467,6 +475,13 @@ assert apps.partial.match("DL1AB") == ["DL1ABC", "DL1ABD", "EA8/DL1ABX"]
 assert apps.partial.match("K1ABC")[0] == "K1ABC" and apps.partial.match("dk1ab")[:1] == ["DK1AB"]
 apps.manual_freq["A"] = 144300000; apps.val["call"] = "DL1ABQ"; apps.enter()   # from this log too
 apps.val["call"] = "L1AB"; assert apps.partial_matches() == ["DL1ABC", "DL1ABD", "DL1ABQ", "EA8/DL1ABX"]
+# CW message placeholders
+assert "\\stop_morse" in state["cmds"]
+ccw = m.load_config(work, os.path.join(EX, "darc-cwa.ini")); ccw["contest"]["exchange_sent"] = "# N13"
+appc = m.App(ccw, m.Log(os.path.join(work, "cw.db"))); appc.val["call"] = "dl1abc"
+assert appc.message_text(ccw["contest"]["cw_f1"]) == "CQ TEST DA2IT DA2IT"
+assert appc.message_text("{call} 5nn {exch}  {nothing} k") == "DL1ABC 5NN 001 N13 K"
+appc.send_message("cw_f1"); assert appc.msg == "Rig offline - cannot send CW."
 # periodic backup
 bdir = os.path.join(work, "bk"); c9 = m.load_config(work, "wsa"); c9["backup"]["folder"] = bdir
 c9["backup"]["keep"] = "2"

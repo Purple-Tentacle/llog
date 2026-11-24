@@ -778,6 +778,27 @@ class Rig(threading.Thread):
     # generic tune operation
     TUNE_COMMANDS = {"KX2": "w SWT20;", "KX3": "w SWT44;"}
 
+    def send_cw(self, text):
+        """Lets the radio key a CW text (Hamlib 'send_morse'). Runs on its
+        own connection: the answer only comes when the radio took the text."""
+        threading.Thread(target=self._cw, args=(f"b{self._vfo_arg(self.vfo)} {text}",
+                                                f"CW: {text}"), daemon=True).start()
+
+    def stop_cw(self):
+        threading.Thread(target=self._cw, args=("\\stop_morse", "CW stopped."),
+                         daemon=True).start()
+
+    def _cw(self, command, done):
+        try:
+            with socket.create_connection(self.addr, timeout=30) as sock:
+                sock.sendall((command + "\n").encode())
+                answer = sock.recv(200).decode("ascii", "replace").strip()
+        except OSError as exc:
+            self.tune_info = f"CW not sent: {exc}"
+            return
+        self.tune_info = done if answer in ("", "RPRT 0") else (
+            f"CW not sent: rigctld answered {answer} - is the radio in CW?")
+
     def tune(self, command="auto"):
         """Starts an ATU tune cycle. Runs on its own connection so that a
         slow or missing answer cannot disturb the polling connection."""
@@ -1460,6 +1481,7 @@ def load_config(config_dir, contest):
                                "serial_start": "1", "worked_before": "",
                                "mult_country": "no", "mult_calls": "",
                                "mult_prefix": "no", "mult_exclude": "",
+                               "cw_f1": "CQ TEST {MYCALL} {MYCALL}",
                                "mode": "", "category_band": "",
                                "category_mode": "", "category_power": ""}})
     station_file = os.path.join(config_dir, "config.ini")
@@ -1587,6 +1609,7 @@ class App:
         self.view = "newest"  # panel view: "newest" or "map" (band map)
         self.prompt = None    # question on the message line: text, value, action
         self.menus = []       # open menus, the last one is shown (see main_menu)
+        self.cw_until = 0     # until when a CW message is probably still sent
         self.rigctld = Rigctld(cfg)
         self.edit = None      # QSO being edited in the list, or None
         self.eval = {}        # its cell texts while editing
@@ -1735,6 +1758,31 @@ class App:
                 hamlib = "LSB" if self.freq() < 10_000_000 else "USB"
             self.rig.set_mode(self.row, hamlib)
         self.msg = f"Row {self.row} mode {mode}"
+
+    def message_text(self, template):
+        """CW message with its placeholders filled in."""
+        values = {"MYCALL": self.mycall, "CALL": self.val["call"],
+                  "EXCH": self.exch_sent()}
+        text = re.sub(r"\{(\w+)\}",
+                      lambda m: values.get(m.group(1).upper(), ""), template)
+        return " ".join(text.upper().split())
+
+    def send_message(self, key):
+        """F1: send the CW message set in the contest file."""
+        text = self.message_text(self.cfg["contest"].get(key, ""))
+        raw_mode = self.rig.mode.get(self.row) or ""
+        if not text:
+            self.msg = f"No message: set {key} in the contest file."
+        elif not self.rig.online:
+            self.msg = "Rig offline - cannot send CW."
+        elif raw_mode not in ("CW", "CWR"):
+            self.msg = f"Radio is in {raw_mode or 'an unknown mode'}, not CW - nothing sent."
+        else:
+            self.rig.tune_info = ""
+            self.rig.send_cw(text)
+            self.msg = f"CW: {text} ...  (Esc stops)"
+            # rough length of the transmission at 12 WPM, for the Esc key
+            self.cw_until = time.time() + len(text) * 1.2 + 2
 
     def switch_row(self):
         self.row = "B" if self.row == "A" else "A"
@@ -2075,6 +2123,9 @@ class App:
             self.clear()
             self.spot = ""
             self.msg = "Cleared."
+            if time.time() < self.cw_until:      # a CW message may still be running
+                self.rig.stop_cw()
+                self.cw_until = 0
         elif ch in ("\t", curses.KEY_BTAB) or (ch == " " and name != "exch"):
             if self.focus == 0:
                 self.leave_call_field()
@@ -2106,6 +2157,8 @@ class App:
         if ch in ALT_M:
             self.menus = [self.main_menu()]
             self.msg = "Menu: Up/Down, Enter selects, Esc goes back."
+        elif ch == curses.KEY_F1:
+            self.send_message("cw_f1")
         elif ch == curses.KEY_F6:
             self.spot_send()
         elif ch == curses.KEY_F7:
@@ -2566,7 +2619,7 @@ class App:
             cursor = (h - 2, min(1 + len(line), w - 2))
         else:
             put(h - 2, 1, self.msg)
-        put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
+        put(h - 1, 0, " Enter log | Tab next | Esc clear | F1 CQ (CW) | \\ row A/B | "
                       "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn panel | "
                       "F6 spot | F7 map | F9 store | F8 delete | "
                       "Alt-M menu (export, backup, radio, ATU, quit) ".ljust(w - 1),
