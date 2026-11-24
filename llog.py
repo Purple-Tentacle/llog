@@ -1488,6 +1488,7 @@ def load_config(config_dir, contest):
                                "mult_country": "no", "mult_calls": "",
                                "mult_prefix": "no", "mult_exclude": "",
                                "cw_f1": "CQ TEST {MYCALL} {MYCALL} K",
+                               "cw_enter": "{MYCALL} QRZ",
                                "mode": "", "category_band": "",
                                "category_mode": "", "category_power": ""}})
     station_file = os.path.join(config_dir, "config.ini")
@@ -1773,6 +1774,9 @@ class App:
                       lambda m: values.get(m.group(1).upper(), ""), template)
         return " ".join(text.upper().split())
 
+    def cw_ready(self):
+        return self.rig.online and (self.rig.mode.get(self.row) or "") in ("CW", "CWR")
+
     def send_message(self, key):
         """F1: send the CW message set in the contest file."""
         text = self.message_text(self.cfg["contest"].get(key, ""))
@@ -1800,6 +1804,9 @@ class App:
         call = self.val["call"]
         if self.focus == 0 and not call and self.spot and self.spot_take():
             pass
+        elif (not call and self.cw_ready()
+              and self.cfg["contest"].get("cw_enter", "").strip()):
+            self.send_message("cw_enter")    # empty call field in CW: "QRZ?"
         elif self.focus == 0 and parse_freq(call) and not is_call(call):
             self.set_freq(parse_freq(call))
             self.val["call"] = ""

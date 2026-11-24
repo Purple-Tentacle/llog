@@ -165,7 +165,7 @@ work.
 Both of your rows share one receiver; this is quick switching between two
 frequencies or modes, not listening to both.
 
-## CW message (F1)
+## CW messages (F1 and Enter)
 
 F1 lets the radio send a CW message, by default a CQ call. The radio keys the
 text itself at its own keyer speed; llog only hands it over through
@@ -181,10 +181,19 @@ cw_f1 = CQ TEST {MYCALL} {MYCALL} K
 | `{CALL}` | the callsign in the call field |
 | `{EXCH}` | the exchange you send, including a running number |
 
-F1 only sends when the radio is in CW; in any other mode nothing is
+Enter in an empty call field sends a second message, by default your
+callsign and QRZ, for when a caller did not come back or you want the next
+one:
+
+```
+cw_enter = {MYCALL} QRZ
+```
+
+Both keys only send when the radio is in CW; in any other mode nothing is
 transmitted and the message line says so. Esc shortly after F1 stops the
 message: Elecraft radios are sent their own back-to-receive command, other
-radios Hamlib's stop command. An empty `cw_f1 =` switches the key off for a contest.
+radios Hamlib's stop command. An empty `cw_f1 =` or
+`cw_enter =` switches that message off for a contest.
 
 ## ATU tune
 
@@ -500,6 +509,7 @@ prefix (`EA8/DL1ABC` is Canary Islands); `/MM` has no country.
 | --- | --- | --- |
 | `call` | `OK/DA2IT` | Callsign for this contest, if it differs from the one in `config.ini` |
 | `cw_f1` | `CQ TEST {MYCALL}` | CW message sent by F1 |
+| `cw_enter` | `{MYCALL} QRZ` | CW message sent by Enter in an empty call field |
 | `mode` | `RTTY` | Log every QSO with this mode, whatever the radio reports (useful when the radio is in a generic data mode) |
 | `category_band`, `category_mode`, `category_power` | `ALL`, `RTTY`, `LOW` | Written as `CATEGORY-BAND` etc. into the Cabrillo header |
 
@@ -518,7 +528,7 @@ The score is your claimed score; the organiser's evaluation is what counts.
 
 | Key | Action |
 | --- | --- |
-| Enter | Log the QSO |
+| Enter | Log the QSO. In an empty call field, in CW: send the QRZ message |
 | F1 | Send the CW message of the contest file (a CQ call by default); only in CW |
 | Tab / Shift-Tab | Next / previous field |
 | Space | Jump from callsign to exchange |

@@ -118,6 +118,8 @@ send("dl1abc/p"); send(" "); send("o05"); send("\r")          # QSO 1 on 14060 C
 send("\x1bOP", 1.0)                                           # F1 in CW: sends the CQ message
 assert "b CQ TEST DA2IT DA2IT K" in state["cmds"]
 send("\x1b")                                                  # Esc right after: stop sending
+send("\r", 1.0)                                               # Enter, empty call field, CW
+assert "b DA2IT QRZ" in state["cmds"]
 send("dl1abc/p\r"); assert b"DUPE" in screen                 # dupe: 1st Enter warns
 send("\x1b")                                                 # Esc, not logged
 send("7030.5\r", 1.2)                                         # QSY via logger
@@ -125,6 +127,8 @@ send("ssb\r", 1.2)                                            # mode via logger
 n_cw = sum(c.startswith("b ") for c in state["cmds"])
 send("\x1bOP")                                                # F1 in SSB: refused
 assert sum(c.startswith("b ") for c in state["cmds"]) == n_cw and b"not CW - nothing sent" in screen
+send("\r")                                                    # empty Enter in SSB: nothing sent
+assert sum(c.startswith("b ") for c in state["cmds"]) == n_cw
 send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\t"); send("jo40\r")   # QSO 2 with RSTs and locator
 send("oops1x\r"); send("\x1b[19~"); send("y")                 # QSO 3, F8 delete
 UP, BTAB = "\x1bOA", "\x1b[Z"
