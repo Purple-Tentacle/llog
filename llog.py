@@ -483,6 +483,32 @@ def next_exchange(template, sent_so_far, start=1):
     return f"{head}{number:03d}{tail}"
 
 
+MORSE = {
+    "A": ".-", "B": "-...", "C": "-.-.", "D": "-..", "E": ".", "F": "..-.",
+    "G": "--.", "H": "....", "I": "..", "J": ".---", "K": "-.-", "L": ".-..",
+    "M": "--", "N": "-.", "O": "---", "P": ".--.", "Q": "--.-", "R": ".-.",
+    "S": "...", "T": "-", "U": "..-", "V": "...-", "W": ".--", "X": "-..-",
+    "Y": "-.--", "Z": "--..", "0": "-----", "1": ".----", "2": "..---",
+    "3": "...--", "4": "....-", "5": ".....", "6": "-....", "7": "--...",
+    "8": "---..", "9": "----.", "/": "-..-.", "?": "..--..", ".": ".-.-.-",
+    ",": "--..--", "=": "-...-", "+": ".-.-.", "-": "-....-"}
+CW_WPM_UNKNOWN = 20     # assumed when the radio does not tell its keyer speed
+
+
+def cw_seconds(text, wpm):
+    """How long a CW text takes at the given speed (PARIS timing: a dot is
+    1.2 / wpm seconds, a dash 3 dots, gaps 1 / 3 / 7 dots)."""
+    units = 0
+    words = text.upper().split()
+    for word in words:
+        for letter in word:
+            code = MORSE.get(letter, "")
+            units += sum(1 if e == "." else 3 for e in code) + max(len(code) - 1, 0)
+        units += 3 * max(len(word) - 1, 0)
+    units += 7 * max(len(words) - 1, 0)
+    return units * 1.2 / (wpm or CW_WPM_UNKNOWN)
+
+
 def ascii_only(text):
     return unicodedata.normalize("NFKD", text or "").encode(
         "ascii", "ignore").decode()
@@ -774,6 +800,8 @@ class Rig(threading.Thread):
             if self.mode[vfo] and self.mode[vfo] != self.mode[old]:
                 self._todo.put(("M", vfo, f"{self.mode[vfo]} -1"))
 
+    wpm = 0      # keyer speed of the radio, 0 while unknown
+
     # ATU tune commands by Hamlib model name; anything else gets Hamlib's
     # generic tune operation
     TUNE_COMMANDS = {"KX2": "w SWT20;", "KX3": "w SWT44;"}
@@ -781,8 +809,17 @@ class Rig(threading.Thread):
     def send_cw(self, text):
         """Lets the radio key a CW text (Hamlib 'send_morse'). Runs on its
         own connection: the answer only comes when the radio took the text."""
-        threading.Thread(target=self._cw, args=(f"b{self._vfo_arg(self.vfo)} {text}",
-                                                f"CW: {text}"), daemon=True).start()
+        threading.Thread(target=self._send_cw, args=(text,), daemon=True).start()
+
+    def _send_cw(self, text):
+        # the keyer speed tells how long the text takes (see cw_seconds)
+        try:
+            answer = self._raw(f"l{self._vfo_arg(self.vfo)} KEYSPD").split()
+            if answer and answer[0].isdigit() and 5 <= int(answer[0]) <= 100:
+                self.wpm = int(answer[0])
+        except OSError:
+            pass
+        self._cw(f"b{self._vfo_arg(self.vfo)} {text}", f"CW: {text}")
 
     ELECRAFT = ("KX2", "KX3", "K3", "K3S", "K4")
 
@@ -1504,7 +1541,7 @@ def load_config(config_dir, contest):
                    "cluster": {"host": "", "port": "7300", "minutes": "30",
                                "call": ""},
                    "backup": {"minutes": "5", "keep": "50", "folder": ""},
-                   "cw": {"enter_sends": "yes"},
+                   "cw": {"enter_sends": "yes", "cq_pause": "3"},
                    "contest": {"contest": "", "exchange_sent": "",
                                "category_operator": "SINGLE-OP",
                                "email": "", "specific": "",
@@ -1648,6 +1685,8 @@ class App:
         self.prompt = None    # question on the message line: text, value, action
         self.menus = []       # open menus, the last one is shown (see main_menu)
         self.cw_until = 0     # until when a CW message is probably still sent
+        self.cq_auto = False  # F11: the CQ message is repeated
+        self.cq_sent = (0, "")   # when the last repeated CQ started, and its text
         con = cfg["contest"]
         self.esm_mode = con.get("esm_start", "run").strip().lower()   # run / sp
         self.esm_required = con.get("esm_required", "exch").lower().replace(
@@ -1878,6 +1917,46 @@ class App:
                 if self.esm_mode == "run":
                     entry["esm_sent"] = call
 
+    # ---- repeated CQ (F11)
+    def cq_pause(self):
+        """Seconds between the end of a CQ and the start of the next one."""
+        try:
+            return max(0.0, float(self.cfg["cw"].get("cq_pause", "3")))
+        except ValueError:
+            return 3.0
+
+    def auto_cq_toggle(self):
+        if self.cq_auto:
+            self.cq_auto = False
+            self.msg = "Auto CQ off."
+        elif self.esm_mode != "run":
+            self.msg = "Auto CQ works in Run only (Alt-M, then S)."
+        elif not self.fkeys["run"][1][1]:
+            self.msg = "Auto CQ sends the F1 message, and F1 has none."
+        elif self.auto_cq_send():
+            self.cq_auto = True
+            self.msg = (f"Auto CQ on, pause {self.cq_pause():g} s: "
+                        f"{self.cq_sent[1]}  (any key stops)")
+
+    def auto_cq_send(self):
+        text = self.keys_text([1])
+        if self.send_text(text):
+            self.cq_sent = (time.time(), text)
+            return True
+        return False
+
+    def auto_cq_tick(self):
+        """Called regularly: sends the next CQ when the pause is over."""
+        if not self.cq_auto:
+            return
+        started, text = self.cq_sent
+        due = started + cw_seconds(text, self.rig.wpm) + self.cq_pause()
+        if self.esm_mode != "run":
+            self.cq_auto = False
+        elif time.time() >= due and not self.auto_cq_send():
+            self.cq_auto = False
+            self.msg += " Auto CQ off."
+
     def switch_row(self):
         self.row = "B" if self.row == "A" else "A"
         if self.rig.online:
@@ -2022,6 +2101,8 @@ class App:
             label, template = self.fkeys[self.esm_mode][number]
             if template:
                 segments.append((f" F{number} {label} ", number in keys))
+        if self.esm_mode == "run":
+            segments.append((f" F11 Auto CQ {self.cq_pause():g}s ", self.cq_auto))
         segments.append((" F12 Wipe ", False))
         return segments, note
 
@@ -2181,6 +2262,8 @@ class App:
             ("e", f"ESM, Enter sends message: {enter} (change)", "enter_sends"),
             ("s", "Operating: " + ("Run, calling CQ" if self.esm_mode == "run"
                                    else "Search & pounce") + " (change)", "esm_mode"),
+            ("p", f"Auto CQ (F11) pause: {self.cq_pause():g} s (change)",
+             "cq_pause"),
             ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit")]}
 
     def radio_menu(self):
@@ -2297,6 +2380,21 @@ class App:
                         "ESM off: Enter only logs") + f"{problem}."
         elif action == "backup":
             self.manual_backup()
+        elif action == "cq_pause":
+            def save(value):
+                try:
+                    seconds = float(value.strip().replace(",", "."))
+                    if not 0 <= seconds <= 600:
+                        raise ValueError
+                except ValueError:
+                    self.msg = "Pause not changed: type seconds from 0 to 600."
+                    return
+                problem = self.save_setting("cw", cq_pause=f"{seconds:g}")
+                self.msg = f"Auto CQ pause is now {seconds:g} s{problem}."
+            self.prompt = {"text": f"Auto CQ pause in seconds (now "
+                                   f"{self.cq_pause():g}; Enter saves, Esc "
+                                   "cancels): ",
+                           "value": "", "action": save}
         elif action == "esm_mode":
             self.esm_mode = "sp" if self.esm_mode == "run" else "run"
             self.msg = ("Run: Enter answers callers with their call and your "
@@ -2387,6 +2485,11 @@ class App:
 
     def key(self, scr, ch):
         """Returns False to quit."""
+        if self.cq_auto and ch != curses.KEY_F11:
+            self.cq_auto = False         # any key ends the repeated CQ
+            self.msg = "Auto CQ off."
+            if ch == "\x1b" and not self.prompt and not self.menus:
+                self.cw_until = time.time() + 1    # Esc also cuts a running CQ
         if self.prompt:
             self.prompt_key(ch)
             return True
@@ -2399,6 +2502,8 @@ class App:
             self.msg = "Menu: Up/Down, Enter selects, Esc goes back."
         elif isinstance(ch, int) and curses.KEY_F1 <= ch <= curses.KEY_F10:
             self.fkey(ch - curses.KEY_F0)
+        elif ch == curses.KEY_F11:
+            self.auto_cq_toggle()
         elif ch == curses.KEY_F12:
             self.clear()
             self.spot = ""
@@ -2927,6 +3032,7 @@ class App:
                 self.msg, self.rig.tune_info = self.rig.tune_info, ""
             self.sync_prefill()
             self.auto_backup()
+            self.auto_cq_tick()
             if self.cluster.reply:
                 self.msg, self.cluster.reply = self.cluster.reply, ""
             self.draw(scr)

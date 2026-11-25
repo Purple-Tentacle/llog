@@ -33,6 +33,8 @@ def fake_client(conn):
                              b"Mfg name:\tElecraft\n")
             elif line.startswith("w "):
                 conn.sendall(b"\n")
+            elif line == "l KEYSPD":
+                conn.sendall(b"40\n")
             elif line.startswith("b ") or line == "\\stop_morse":
                 conn.sendall(b"RPRT 0\n")
             elif line.startswith("V VFO"):
@@ -89,6 +91,8 @@ port = {port}
 host = 127.0.0.1
 port = {csrv.getsockname()[1]}
 call = da2it-1
+[cw]
+cq_pause = 1
 """)
 EX = os.path.join(os.path.dirname(HERE), "examples")
 open(os.path.join(work, "contests", "wsa.ini"), "w").write(
@@ -123,6 +127,13 @@ assert "b CQ TEST DA2IT DA2IT K" in state["cmds"]
 send("\x1b")                                                  # Esc right after: stop sending
 send("\r", 1.0)                                               # Enter, empty call field, CW
 assert state["cmds"].count("b CQ TEST DA2IT DA2IT K") == 2     # ESM: empty Enter calls CQ again
+n_cq = state["cmds"].count("b CQ TEST DA2IT DA2IT K")
+send("\x1b[23~", 1.0)                                         # F11: repeated CQ, 1 s pause
+assert b"Auto CQ on" in screen or b"CW: CQ TEST" in screen
+pump(8.0)                                                     # CQ takes 5.1 s at 40 WPM
+assert state["cmds"].count("b CQ TEST DA2IT DA2IT K") == n_cq + 2 and "l KEYSPD" in state["cmds"]
+send("d", 0.5); send("\x7f")                                  # typing stops it
+pump(8.0); assert state["cmds"].count("b CQ TEST DA2IT DA2IT K") == n_cq + 2
 send("\x1b[18~", 1.0)                                         # F7 in Run: QRZ
 assert "b DA2IT QRZ" in state["cmds"]
 send("dl1abc/p\r"); assert b"DUPE" in screen                 # dupe: 1st Enter warns
@@ -591,6 +602,36 @@ assert not m.App(m.load_config(cdir, "t"), m.Log(os.path.join(work, "r2.db"))).e
 appr.menus = [appr.main_menu()]; assert "off" in appr.menus[0]["items"][4][1]
 appr.fkey(1); assert sent_cw == ["CQ TEST DA2IT DA2IT K"]
 appr.menu_key("e"); appr.enter(); assert sent_cw == ["CQ TEST DA2IT DA2IT K"] * 2
+# repeated CQ on F11, pause from the menu
+assert abs(m.cw_seconds("PARIS PARIS", 20) - 6.0 + 7 * 0.06) < 1e-9 and m.cw_seconds("", 20) == 0
+assert m.cw_seconds("E E", 0) == m.cw_seconds("E E", m.CW_WPM_UNKNOWN)
+del sent_cw[:]; appr.rig.wpm = 30; F11 = m.curses.KEY_F11
+assert appr.cq_pause() == 3 and (" F11 Auto CQ 3s ", False) in appr.key_line()[0]
+appr.menus = [appr.main_menu()]; assert "pause: 3 s" in appr.menus[0]["items"][6][1]
+appr.menu_key("p"); assert appr.prompt and not appr.menus
+for ch in "abc\r": appr.key(None, ch)
+assert "not changed" in appr.msg and appr.cq_pause() == 3
+appr.menus = [appr.main_menu()]; appr.menu_key("p")
+for ch in "0,5\r": appr.key(None, ch)
+assert appr.cq_pause() == 0.5 and "0.5 s" in appr.msg
+saved.read(os.path.join(cdir, "config.ini")); assert saved["cw"]["cq_pause"] == "0.5"
+appr.key(None, F11); assert appr.cq_auto and sent_cw == ["CQ TEST DA2IT DA2IT K"]
+assert (" F11 Auto CQ 0.5s ", True) in appr.key_line()[0] and "pause 0.5 s" in appr.msg
+appr.auto_cq_tick(); assert len(sent_cw) == 1                    # still sending
+long = m.cw_seconds(sent_cw[0], 30)
+appr.cq_sent = (time.time() - long - 0.4, sent_cw[0]); appr.auto_cq_tick(); assert len(sent_cw) == 1   # pause
+appr.cq_sent = (time.time() - long - 0.6, sent_cw[0]); appr.auto_cq_tick(); assert len(sent_cw) == 2   # next CQ
+appr.key(None, F11); assert not appr.cq_auto and appr.msg == "Auto CQ off."
+appr.key(None, F11); assert appr.cq_auto and len(sent_cw) == 3
+appr.key(None, "d"); assert not appr.cq_auto and appr.val["call"] == "D"    # typing ends it
+appr.key(None, "\x7f")
+appr.key(None, F11); appr.rig.mode["A"] = "USB"                  # radio leaves CW: it ends
+appr.cq_sent = (0, sent_cw[0]); appr.auto_cq_tick()
+assert not appr.cq_auto and "Auto CQ off" in appr.msg and len(sent_cw) == 4
+appr.rig.mode["A"] = "CW"; appr.esm_mode = "sp"; appr.key(None, F11)
+assert not appr.cq_auto and "Run only" in appr.msg and len(sent_cw) == 4
+assert not any("F11" in text for text, _ in appr.key_line()[0])
+appr.esm_mode = "run"; appr.save_setting("cw", cq_pause="3")
 appr.rig.online = False
 assert lit() == ([], "ESM: not in CW, Enter logs")
 # periodic backup

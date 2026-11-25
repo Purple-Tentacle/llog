@@ -189,6 +189,7 @@ one for **search and pounce** (you answer someone's CQ):
 | F8 | Agn: `AGN` | Agn: `AGN` |
 | F9 | Nr?: `NR?` | Nr?: `NR?` |
 | F10 | Call?: `CL?` | Call?: `CL?` |
+| F11 | Auto CQ: repeats the F1 message with a pause | (none) |
 | F12 | Wipe: clears the entry row | the same |
 
 Switch between the two sets in the menu: Alt-M, then S ("Operating"). The
@@ -196,6 +197,25 @@ header shows `RUN` or `S&P`.
 
 The second line from the bottom of the screen shows the message keys of the
 current set with their labels. Keys without a message are left out.
+
+### Repeated CQ (F11)
+
+F11 in Run sends the F1 message again and again, with a pause after each
+transmission. The key is highlighted while this is on. Any key ends it: F11
+again, Esc (which also cuts a CQ that is being sent), or simply typing the
+callsign of the station that answers. It also ends when the radio leaves CW.
+
+The pause is set in the menu (Alt-M, then P) in seconds; decimals such as
+`2.5` are allowed, the default is 3. It is kept in `config.ini` (`cq_pause`
+in the `[cw]` section) and is shown next to the key.
+
+llog cannot see when the radio has finished sending. It asks the radio for
+its keyer speed and works out from it how long the message takes, and the
+pause starts after that time. If the radio does not tell its speed, llog
+assumes 20 WPM; at a slower speed the pause is then shorter than set.
+
+Many terminals use F11 for full screen. If the key does not reach llog,
+remove that shortcut in the terminal's settings.
 
 ### ESM ("Enter sends message")
 
@@ -625,7 +645,7 @@ line above it the CW message keys.
 | Key | Action |
 | --- | --- |
 | Enter | Log the QSO. In CW with ESM on: send the messages of the QSO first (see "CW messages and ESM") |
-| F1 to F10 | Send a CW message; F12 clears the entry row |
+| F1 to F10 | Send a CW message; F11 repeats the CQ with a pause; F12 clears the entry row |
 | Tab / Shift-Tab | Next / previous field |
 | Space | Jump from callsign to exchange |
 | Esc | Clear the entry line, and stop a CW message that is being sent |
@@ -639,7 +659,7 @@ line above it the CW message keys.
 | Del | Remove the highlighted stored station |
 | Alt-S | Spot a station on the DX cluster (asks for a comment first) |
 | Alt-D | Delete the QSO entered last, or the selected one while editing |
-| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ESM on/off, Run or S&P, ATU tune, quit |
+| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ESM on/off, Run or S&P, auto CQ pause, ATU tune, quit |
 | Ctrl-X | Quit directly, without the menu |
 
 Alt and a letter needs a terminal that sends Alt as an Escape prefix, which
@@ -650,7 +670,7 @@ is the usual setting on Linux.
 Alt-M opens a small menu in the middle of the screen. Up and Down move, Enter
 selects, Esc goes back one level or closes it; the letter in front of an entry selects it directly
 (`A` for ADIF, `C` for Cabrillo, `B` for a backup, `R` for the radio menu,
-`E` for the ESM switch, `S` for Run or search and pounce, `T` for ATU tune, `Q` to quit). The exports are written
+`E` for the ESM switch, `S` for Run or search and pounce, `P` for the auto CQ pause, `T` for ATU tune, `Q` to quit). The exports are written
 next to the log file and the message line shows the file name.
 
 ### Editing a QSO
