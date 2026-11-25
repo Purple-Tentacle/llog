@@ -854,7 +854,7 @@ class Rig(threading.Thread):
             self.voice_ok = self._voice_run(number)
         except OSError as exc:
             self.voice_ok = False
-            self.tune_info = f"Voice memory not sent: {exc}"
+            self.tune_info = f"Voice memory not started: {exc}"
         self.voice_end = time.time()
         self.voice_busy = False
 
@@ -871,25 +871,54 @@ class Rig(threading.Thread):
                 self.tune_info = (f"Voice memory not sent: rigctld answered "
                                   f"{answer or 'nothing'}")
                 return False
-        # follow the transmit state: on within 3 s, then off again
-        started, seen = time.time(), False
-        with socket.create_connection(self.addr, timeout=4) as sock:
+        # follow the transmit state: on within 3 s, then off again.
+        # rigctld drops a connection when the radio once fails to answer,
+        # so a lost connection is opened again instead of giving up.
+        started, seen, sock, failures = time.time(), False, None, 0
+        try:
             while time.time() < started + 120:
-                sock.sendall(f"t{self._vfo_arg(self.vfo)}\n".encode())
-                answer = sock.recv(100).decode("ascii", "replace").strip()
-                if answer not in ("0", "1"):
+                try:
+                    if sock is None:
+                        sock = socket.create_connection(self.addr, timeout=4)
+                    sock.sendall(f"t{self._vfo_arg(self.vfo)}\n".encode())
+                    answer = sock.recv(100).decode("ascii", "replace").strip()
+                    if not answer:
+                        raise OSError("rigctld closed the connection")
+                except OSError as exc:
+                    if sock is not None:
+                        sock.close()
+                    sock, failures = None, failures + 1
+                    if failures > 8:
+                        self.tune_info = ("Voice memory started, but the transmit "
+                                          f"state cannot be read: {exc}")
+                        return False
+                    time.sleep(0.3)
+                    continue
+                if answer.startswith("RPRT"):
+                    # the radio did not answer this once; ask again
+                    failures += 1
+                    if failures > 8:
+                        self.tune_info = ("Voice memory started, but the radio does "
+                                          f"not tell when it transmits ({answer}).")
+                        return False
+                elif answer not in ("0", "1"):
                     self.tune_info = ("Voice memory started, but the radio does "
                                       "not tell when it transmits.")
                     return False
-                if answer == "1":
-                    seen = True
-                elif seen:
-                    return True
-                elif time.time() > started + 3:
-                    self.tune_info = (f"Voice memory {number}: the radio did not "
-                                      "transmit. Is the memory recorded?")
-                    return False
+                else:
+                    failures = 0
+                    if answer == "1":
+                        seen = True
+                    elif seen:
+                        return True
+                    elif time.time() > started + 3:
+                        self.tune_info = (f"Voice memory {number}: the radio did not "
+                                          "transmit. Is the memory recorded?")
+                        return False
                 time.sleep(0.25)
+        finally:
+            if sock is not None:
+                sock.close()
         return True
 
     def stop_voice(self):

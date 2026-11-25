@@ -32,6 +32,11 @@ def fake_client(conn):
                 conn.sendall(b"Caps dump for model: 2044\nModel name:\tKX2\n"
                              b"Mfg name:\tElecraft\n")
             elif line == "t":
+                state["t"] = state.get("t", 0) + 1
+                if state["t"] % 4 == 2:        # as rigctld after a timeout of the
+                    conn.close(); break        # radio: the connection is dropped
+                if state["t"] % 4 == 0:
+                    conn.sendall(b"RPRT -5\n"); continue
                 conn.sendall(b"1\n" if time.time() < state.get("tx", 0) else b"0\n")
             elif line.startswith("w "):
                 if line.startswith("w SWT11;") and state.get("recorded", True):
