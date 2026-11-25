@@ -827,13 +827,17 @@ class Rig(threading.Thread):
         """Ends a CW message that is being sent. Elecraft radios get their
         own 'back to receive' command, which also empties the text buffer;
         other radios Hamlib's stop_morse."""
-        command = "w RX;" if self.model.upper() in self.ELECRAFT else "\\stop_morse"
+        command = "w RX;TQ;" if self.model.upper() in self.ELECRAFT else "\\stop_morse"
         threading.Thread(target=self._cw, args=(command, "CW stopped.",
                                                 "CW not stopped"), daemon=True).start()
 
     # ---- voice memories of the radio (SSB): llog only starts and stops them
     # KX2 / KX3: a tap on MSG, then on the switch that carries the number
-    VOICE_SWITCHES = {1: "SWT11;SWT19;", 2: "SWT11;SWT27;"}
+    # The TQ; at the end (a query the radio answers) keeps rigctld from
+    # waiting for a reply that a switch tap or RX; never gives: while it
+    # waits, it serves no other command.
+    VOICE_SWITCHES = {1: "SWT11;SWT19;TQ;", 2: "SWT11;SWT27;TQ;"}
+    _voice_id = 0         # counts the started messages; a stop makes it move on
     voice_busy = False    # a voice memory was started and is not finished
     voice_ok = True       # the last one was really transmitted
     voice_end = 0         # when the radio went back to receive
@@ -842,23 +846,29 @@ class Rig(threading.Thread):
         """Lets the radio transmit its voice memory 1 or 2 and watches the
         transmit state, so that voice_end tells when it was finished."""
         self.voice_busy, self.voice_ok = True, True
-        threading.Thread(target=self._voice, args=(number,), daemon=True).start()
+        self._voice_id += 1
+        threading.Thread(target=self._voice, args=(number, self._voice_id),
+                         daemon=True).start()
 
     def _icom_raw(self, data):
         """A CI-V command for the IC-705 (default address A4), passed through."""
         frame = "".join(f"\\0x{b:02x}" for b in (0xFE, 0xFE, 0xA4, 0xE0, *data, 0xFD))
         self._raw("w " + frame)
 
-    def _voice(self, number):
+    def _voice(self, number, ident):
         try:
-            self.voice_ok = self._voice_run(number)
+            ok, problem = self._voice_run(number, ident), ""
         except OSError as exc:
-            self.voice_ok = False
-            self.tune_info = f"Voice memory not started: {exc}"
-        self.voice_end = time.time()
-        self.voice_busy = False
+            ok, problem = False, f"Voice memory not started: {exc}"
+        if ident == self._voice_id:      # not stopped or replaced meanwhile
+            self.voice_ok = ok
+            self.tune_info = problem or self.tune_info
+            self.voice_end = time.time()
+            self.voice_busy = False
 
-    def _voice_run(self, number):
+    def _voice_run(self, number, ident=None):
+        if ident is None:
+            ident = self._voice_id
         model = (self.model or self._identify()).upper()
         if model in ("KX2", "KX3"):
             self._raw("w " + self.VOICE_SWITCHES[number])
@@ -876,7 +886,7 @@ class Rig(threading.Thread):
         # so a lost connection is opened again instead of giving up.
         started, seen, sock, failures = time.time(), False, None, 0
         try:
-            while time.time() < started + 120:
+            while time.time() < started + 120 and ident == self._voice_id:
                 try:
                     if sock is None:
                         sock = socket.create_connection(self.addr, timeout=4)
@@ -922,13 +932,17 @@ class Rig(threading.Thread):
         return True
 
     def stop_voice(self):
+        """Stops the voice message. llog is free for the next one at once,
+        without waiting until the radio reports receive."""
+        self._voice_id += 1              # ends the transmit watch
+        self.voice_busy, self.voice_ok, self.voice_end = False, True, time.time()
         threading.Thread(target=self._stop_voice, daemon=True).start()
 
     def _stop_voice(self):
         try:
             model = (self.model or self._identify()).upper()
             if model in self.ELECRAFT:
-                self._raw("w RX;")
+                self._raw("w RX;TQ;")
             elif self._raw("\\stop_voice_mem").strip() != "RPRT 0" and "705" in model:
                 self._icom_raw((0x28, 0x00, 0x00))
             self.tune_info = "Voice message stopped."
