@@ -1863,54 +1863,109 @@ class App:
         else:
             self.log_qso(call)
 
-    def esm_enter(self, call):
-        """ESM in CW: Enter sends the next message of the QSO and logs it
-        once the required fields are filled.
+    ESM_KEYS = {"dupe_run": "cw_dupe", "mycall": "cw_mycall", "call": "cw_call",
+                "again": "cw_again"}
 
-        Run:  callsign              -> his call + my exchange (cw_call)
-              again, still nothing  -> cw_again
-              required fields there -> cw_tu, QSO logged
-        S&P:  callsign              -> my call (cw_mycall), again on each Enter
-              required fields there -> my exchange (cw_sp_exchange), QSO logged
+    def esm_step(self, call):
+        """What Enter does next for the callsign in the active row (ESM, CW):
+
+        Run:  callsign              -> 'call'   his call + my exchange
+              again, still nothing  -> 'again'
+              required fields there -> 'finish' TU, QSO logged
+        S&P:  callsign              -> 'mycall' my call, again on each Enter
+              required fields there -> 'finish' my exchange, QSO logged
+        Dupes with esm_work_dupes = no: 'dupe_run' (QSO B4) or 'dupe_sp'
+        (no call) first; 'dupe_warn' is the usual question before logging.
         """
         entry = self.entry[self.row]
+        run = self.esm_mode == "run"
         if (not self.esm_work_dupes and entry["dupe_told"] != call
                 and not entry["esm_sent"] and self.dupe()):
+            return "dupe_run" if run else "dupe_sp"
+        missing = [f for f in self.esm_required if not self.val[f].strip()]
+        if missing or (run and not entry["esm_sent"]):
+            if not run:
+                return "mycall"
+            return "call" if entry["esm_sent"] != call else "again"
+        if self.dupe() and self.dupe_ok != call:
+            return "dupe_warn"
+        return "finish"
+
+    def esm_finish_message(self, call):
+        """(message key, text in front) for the Enter that logs the QSO; a
+        callsign corrected after the exchange went out is repeated."""
+        run = self.esm_mode == "run"
+        fixed = run and self.entry[self.row]["esm_sent"] != call
+        return ("cw_tu" if run else "cw_sp_exchange"), (call if fixed else "")
+
+    def esm_enter(self, call):
+        """ESM in CW: Enter sends the next message of the QSO and logs it
+        once the required fields are filled."""
+        entry = self.entry[self.row]
+        step = self.esm_step(call)
+        if step in ("dupe_run", "dupe_sp"):
             # worked before: say so instead of starting the QSO. A further
             # Enter works the station anyway, without asking again.
             entry["dupe_told"] = self.dupe_ok = call
             text = self.dupe_text(self.dupe())
-            if self.esm_mode == "run":
+            if step == "dupe_run":
                 self.send_message("cw_dupe", quiet=True)
                 self.msg = text + " - told him. Enter again works him anyway."
             else:
                 self.msg = text + " - not calling. Enter again calls anyway."
             return
-        missing = [f for f in self.esm_required if not self.val[f].strip()]
         if not entry["esm_exch"]:
             # the exchange (running number) stays the same for this QSO
             entry["esm_exch"] = self.exch_sent()
-        if missing or (self.esm_mode == "run" and not entry["esm_sent"]):
-            if self.esm_mode == "sp":
-                self.send_message("cw_mycall", quiet=True)
-            elif entry["esm_sent"] != call:
-                self.send_message("cw_call", quiet=True)
+        if step in ("mycall", "call", "again"):
+            self.send_message(self.ESM_KEYS[step], quiet=True)
+            if step == "call":
                 entry["esm_sent"] = call
-            else:
-                self.send_message("cw_again", quiet=True)
+            missing = [f for f in self.esm_required if not self.val[f].strip()]
             self.focus = FIELDS.index((missing or ["exch"])[0])
-        elif self.dupe() and self.dupe_ok != call:
+        elif step == "dupe_warn":
             self.dupe_ok = call
             self.msg = self.dupe_text(self.dupe()) + " - Enter again logs it anyway."
         else:
-            # a callsign corrected after the exchange went out is repeated
-            fixed = self.esm_mode == "run" and entry["esm_sent"] != call
-            self.send_message("cw_tu" if self.esm_mode == "run" else "cw_sp_exchange",
-                              quiet=True, prefix=call if fixed else "")
+            key, prefix = self.esm_finish_message(call)
+            self.send_message(key, quiet=True, prefix=prefix)
             sent = self.msg
             self.log_qso(call)
             if sent.startswith("CW:"):
                 self.msg += "  -  " + sent
+
+    def esm_preview(self):
+        """One line saying what Enter would do now."""
+        if not self.enter_sends() or self.edit:
+            return ""
+        if not self.cw_ready():
+            return "ESM: radio not in CW - Enter only logs"
+        call = self.val["call"]
+
+        def text(key, prefix=""):
+            message = self.message_text(self.cfg["contest"].get(key, ""))
+            return " ".join(x for x in (prefix, message) if x) or "(nothing)"
+
+        if not call:
+            if self.focus == 0 and self.spot:
+                return f"Enter takes {self.spot} from the panel"
+            return "Enter sends: " + text("cw_enter" if self.esm_mode == "run"
+                                          else "cw_mycall")
+        if self.focus == 0 and not is_call(call) and (parse_freq(call)
+                                                      or call in TYPED_MODES):
+            return "Enter sets the frequency or mode"
+        if (not is_call(call) or not self.freq()
+                or (self.val["loc"] and not is_locator(self.val["loc"]))):
+            return "Enter: nothing yet (callsign, frequency or locator not valid)"
+        step = self.esm_step(call)
+        if step == "dupe_sp":
+            return "Enter: dupe, does not call (Enter again calls anyway)"
+        if step == "dupe_warn":
+            return "Enter: dupe warning (Enter again sends and logs)"
+        if step == "finish":
+            return "Enter sends: " + text(*self.esm_finish_message(call)) \
+                + "   and logs the QSO"
+        return "Enter sends: " + text(self.ESM_KEYS[step])
 
     def log_qso(self, call):
         info = self.qrz.info(call) or {}
@@ -2720,8 +2775,11 @@ class App:
                 x += max(WIDTHS[name], len(LABELS[name])) + 2
             put(line, x, self.exch_sent(vfo) or "-")
 
-        # check partial: between the entry fields and the panel
+        # ESM: what the Enter key would send now
         scp_x = x + 13
+        put(h - 3, 1, self.esm_preview()[:max(min(scp_x, left_w) - 3, 0)])
+
+        # check partial: between the entry fields and the panel
         scp_w = left_w - scp_x
         if scp_w >= 14 and not self.edit:
             matches = self.partial_matches()

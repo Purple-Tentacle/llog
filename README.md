@@ -197,6 +197,12 @@ When you **search and pounce** (you answer someone's CQ):
 Switch between the two in the menu: Alt-M, then S ("Operating"). The header
 shows `RUN` or `S&P`.
 
+A line under the entry rows always shows what the next Enter would do, with
+the text exactly as it would be sent, for example
+`Enter sends: DL1ABC 5NN N13` or `Enter sends: TU DA2IT   and logs the QSO`.
+It also says when Enter would not transmit: outside CW, on a dupe warning,
+or when the callsign is not complete yet.
+
 Details:
 
 - If you correct the callsign after your exchange went out, the closing

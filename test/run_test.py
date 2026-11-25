@@ -499,7 +499,19 @@ appr.manual_freq["A"] = 3530000; appr.rig.freq["A"] = 3530000
 appr.cfg["contest"]["exchange_sent"] = "# N13"
 EXCH = m.FIELDS.index("exch")
 assert appr.enter_sends() and appr.esm_mode == "run" and appr.esm_required == ["exch"]
+assert appr.esm_preview() == "Enter sends: DA2IT QRZ"
 appr.enter(); assert sent_cw == ["DA2IT QRZ"]                    # Run, empty call field
+appr.val["call"] = "7030"; assert appr.esm_preview() == "Enter sets the frequency or mode"
+appr.val["call"] = "DL"; assert "nothing yet" in appr.esm_preview()
+def says(expected):                                              # the preview matches what is sent
+    line = appr.esm_preview(); n = len(sent_cw); assert line.startswith("Enter sends: "), line
+    appr.enter(); assert len(sent_cw) == n + 1 and sent_cw[-1] == expected, (line, sent_cw[-1:])
+    assert line[13:].replace("   and logs the QSO", "") == expected, line
+appr.val["call"] = "DL0PRE"; says("DL0PRE 5NN 001 N13"); says("AGN")
+appr.val["call"] = "DL0PRF"; appr.val["exch"] = "H24"
+assert appr.esm_preview() == "Enter sends: DL0PRF TU DA2IT   and logs the QSO"
+n_q = appr.log.count(); says("DL0PRF TU DA2IT"); assert appr.log.count() == n_q + 1
+appr.log.delete(appr.log.newest()["id"]); del sent_cw[1:]
 appr.val["call"] = "DL1ABC"; appr.enter()                        # his call + my exchange
 assert sent_cw[-1] == "DL1ABC 5NN 001 N13" and appr.log.count() == 0 and appr.focus == EXCH
 appr.enter(); assert sent_cw[-1] == "AGN" and appr.log.count() == 0   # nothing received yet
@@ -529,8 +541,10 @@ appr.val["exch"] = "H01"; appr.enter()                           # no second dup
 assert sent_cw[-1] == "TU DA2IT" and appr.log.count() == n_log + 1
 appr.val["call"] = "DL7NEW"; appr.enter(); assert sent_cw[-1].startswith("DL7NEW 5NN ")   # no dupe
 appr.clear(); appr.esm_mode = "sp"; n = len(sent_cw)
-appr.val["call"] = "DK5ZZ"; appr.enter()
+appr.val["call"] = "DK5ZZ"; assert "dupe, does not call" in appr.esm_preview()
+appr.enter()
 assert len(sent_cw) == n and "not calling" in appr.msg           # S&P: no transmission
+assert appr.esm_preview() == "Enter sends: DA2IT"
 appr.enter(); assert sent_cw[-1] == "DA2IT"                      # second Enter calls anyway
 appr.clear(); appr.esm_mode = "run"; appr.esm_work_dupes = True
 appr.cfg["contest"]["cw_tu"] = ""; appr.log.delete(appr.log.newest()["id"])   # as before this block
@@ -552,6 +566,7 @@ appr.esm_required = ["exch"]; del sent_cw[:]
 # ESM off: Enter only logs; F1 still sends
 appr.menus = [appr.main_menu()]; assert appr.menus[0]["items"][4][1] == "ESM, Enter sends message: on (change)"
 appr.menu_key("e"); assert not appr.enter_sends() and "ESM off" in appr.msg
+assert appr.esm_preview() == ""
 appr.val["call"] = "DL2XYZ"; appr.enter(); assert appr.log.count() == 8 and not sent_cw
 appr.enter(); assert not sent_cw and appr.msg == "Not a valid callsign."
 saved.read(os.path.join(cdir, "config.ini")); assert saved["cw"]["enter_sends"] == "no"
@@ -560,6 +575,7 @@ appr.menus = [appr.main_menu()]; assert "off" in appr.menus[0]["items"][4][1]
 appr.menu_key("e"); appr.enter(); assert sent_cw == ["DA2IT QRZ"]
 appr.send_message("cw_f1"); assert sent_cw[-1] == "CQ TEST DA2IT DA2IT K"
 appr.rig.online = False
+assert appr.esm_preview() == "ESM: radio not in CW - Enter only logs"
 # periodic backup
 bdir = os.path.join(work, "bk"); c9 = m.load_config(work, "wsa"); c9["backup"]["folder"] = bdir
 c9["backup"]["keep"] = "2"
