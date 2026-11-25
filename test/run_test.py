@@ -122,6 +122,8 @@ send("\x1bOP", 1.0)                                           # F1 in CW: sends 
 assert "b CQ TEST DA2IT DA2IT K" in state["cmds"]
 send("\x1b")                                                  # Esc right after: stop sending
 send("\r", 1.0)                                               # Enter, empty call field, CW
+assert state["cmds"].count("b CQ TEST DA2IT DA2IT K") == 2     # ESM: empty Enter calls CQ again
+send("\x1b[18~", 1.0)                                         # F7 in Run: QRZ
 assert "b DA2IT QRZ" in state["cmds"]
 send("dl1abc/p\r"); assert b"DUPE" in screen                 # dupe: 1st Enter warns
 send("\x1b")                                                 # Esc, not logged
@@ -133,13 +135,13 @@ assert sum(c.startswith("b ") for c in state["cmds"]) == n_cw and b"not CW - not
 send("\r")                                                    # empty Enter in SSB: nothing sent
 assert sum(c.startswith("b ") for c in state["cmds"]) == n_cw
 send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\t"); send("jo40\r")   # QSO 2 with RSTs and locator
-send("oops1x\r"); send("\x1b[19~"); send("y")                 # QSO 3, F8 delete
+send("oops1x\r"); send("\x1bd"); send("y")                     # QSO 3, Alt-D delete
 UP, BTAB = "\x1bOA", "\x1b[Z"
 send("dl9"); send(UP)                                         # typed text stays in row
 send("\t" * 6); send("\x7f\x7f"); send("o05\r")               # edit QSO 2 exchange in list
 send(UP); send(UP); send("x"); send("\x1b")                   # edit QSO 1, cancel
 send("\x7f\x7f\x7f")                                          # remove "dl9" again
-send("oops2x\r"); send(UP); send("\x1b[19~"); send("y")        # delete selected QSO
+send("oops2x\r"); send(UP); send("\x1bd"); send("y")            # delete selected QSO
 send(UP); send(UP); send("\x7f\x7f"); send("\r")               # QSO 1: DL1ABC/P -> DL1ABC
 send(UP); send("\t"); send("\x7f" * 6); send("7040\t")         # QSO 2: frequency,
 send("\x7f" * 3); send("cw"); send(BTAB * 3)                   # mode, back to time cell
@@ -152,18 +154,18 @@ send("db1xx\r"); send("\\", 1.2)                              # QSO in row B, ba
 send("\x7f\x7fk3aa\r")                                        # row A kept "DL7": DLK3AA
 send("\x1b[6~"); send("\x1b[6~"); send("\x1b[5~")              # PgDn PgDn PgUp: latest 40m spot
 send("\r", 1.2); send("\r")                                   # take it (QSY + call), log it
-send("\x1b[17~"); send("\x1b")                                # F6: spot last QSO, cancel
-send("\x1b[17~"); send("tnx Qso\r", 1.2)                       # F6 again, comment, send
+send("\x1bs"); send("\x1b")                                    # Alt-S: spot last QSO, cancel
+send("\x1bs"); send("tnx Qso\r", 1.2)                           # Alt-S again, comment, send
 assert b"you are not registered" in screen and b"dxspider >" not in screen
-send("dl8zz\n"); send("dl8yy"); send("\x1b[20~")               # Ctrl-J and F9: store for later
-send("\x1b[18~")                                              # F7: band map
+send("dl8zz\n"); send("dl8yy"); send("\x1bl")                   # Ctrl-J and Alt-L: store for later
+send("\x1bb")                                                  # Alt-B: band map
 send("\x1bm"); send("t", 1.5)                                  # Alt-M, T: ATU tune
 send("\x1bm"); send("b")                                       # Alt-M, B: backup now
 send("\x1bm"); send("r"); send("\x1b"); send("\x1b")           # Radio submenu, back, close
 send("\x1bm"); send("\x1b")                                   # Alt-M, Esc: menu closed again
 send("\x1bm"); send("\r")                                     # Alt-M, Enter: ADIF
 send("\x1bm"); send("\x1bOB"); send("\r")                     # Alt-M, Down, Enter: Cabrillo                            # F2, F3 exports
-send("\x1b[21~")                                              # F10 no longer quits
+send("\x1b[24~")                                              # F12 wipes the row, does not quit
 send("\x1bm"); send("q", 1.0)                                  # Alt-M, Q: quit
 os.waitpid(pid, 0)
 
@@ -486,96 +488,111 @@ apps.val["call"] = "L1AB"; assert apps.partial_matches() == ["DL1ABC", "DL1ABD",
 assert "w RX;" in state["cmds"]                    # the fake radio reports itself as KX2
 ccw = m.load_config(work, os.path.join(EX, "darc-cwa.ini")); ccw["contest"]["exchange_sent"] = "# N13"
 appc = m.App(ccw, m.Log(os.path.join(work, "cw.db"))); appc.val["call"] = "dl1abc"
-assert appc.message_text(ccw["contest"]["cw_f1"]) == "CQ TEST DA2IT DA2IT K"
+assert appc.keys_text([1]) == "CQ TEST DA2IT DA2IT K" and appc.keys_text([5, 2]) == "DL1ABC 5NN 001 N13"
+appc.val["rst_s"] = "579"; assert appc.keys_text([2]) == "57N 001 N13"; appc.val["rst_s"] = ""
+assert appc.fkeys["run"][1] == ("CQ", "CQ TEST {MYCALL} {MYCALL} K") and appc.fkeys["sp"][7] == ("", "")
 ric = m.Rig("127.0.0.1", 1); ric.model = "IC-705"; sent = []
 ric._cw = lambda command, *a: sent.append(command); ric.stop_cw(); time.sleep(0.2)
 assert sent == ["\\stop_morse"]                          # other radios: Hamlib stop
 assert appc.message_text("{call} 5nn {exch}  {nothing} k") == "DL1ABC 5NN 001 N13 K"
-appc.send_message("cw_f1"); assert appc.msg == "Rig offline - cannot send CW."
-# ESM: Enter runs the CW QSO; Run and S&P; the switch is saved in config.ini
+appc.fkey(1); assert appc.msg == "Rig offline - cannot send CW."
+# ESM: Enter runs the CW QSO with the function-key messages; Run and S&P
 appr.rig.online, appr.rig.mode["A"], sent_cw = True, "CW", []
 appr.rig.send_cw = sent_cw.append
 appr.manual_freq["A"] = 3530000; appr.rig.freq["A"] = 3530000
 appr.cfg["contest"]["exchange_sent"] = "# N13"
 EXCH = m.FIELDS.index("exch")
 assert appr.enter_sends() and appr.esm_mode == "run" and appr.esm_required == ["exch"]
-assert appr.esm_preview() == "Enter sends: DA2IT QRZ"
-appr.enter(); assert sent_cw == ["DA2IT QRZ"]                    # Run, empty call field
-appr.val["call"] = "7030"; assert appr.esm_preview() == "Enter sets the frequency or mode"
-appr.val["call"] = "DL"; assert "nothing yet" in appr.esm_preview()
-def says(expected):                                              # the preview matches what is sent
-    line = appr.esm_preview(); n = len(sent_cw); assert line.startswith("Enter sends: "), line
-    appr.enter(); assert len(sent_cw) == n + 1 and sent_cw[-1] == expected, (line, sent_cw[-1:])
-    assert line[13:].replace("   and logs the QSO", "") == expected, line
-appr.val["call"] = "DL0PRE"; says("DL0PRE 5NN 001 N13"); says("AGN")
-appr.val["call"] = "DL0PRF"; appr.val["exch"] = "H24"
-assert appr.esm_preview() == "Enter sends: DL0PRF TU DA2IT   and logs the QSO"
-n_q = appr.log.count(); says("DL0PRF TU DA2IT"); assert appr.log.count() == n_q + 1
-appr.log.delete(appr.log.newest()["id"]); del sent_cw[1:]
-appr.val["call"] = "DL1ABC"; appr.enter()                        # his call + my exchange
-assert sent_cw[-1] == "DL1ABC 5NN 001 N13" and appr.log.count() == 0 and appr.focus == EXCH
-appr.enter(); assert sent_cw[-1] == "AGN" and appr.log.count() == 0   # nothing received yet
+def lit():                                          # highlighted keys and the note of the key line
+    segments, note = appr.key_line()
+    return [text.split()[0] for text, on in segments if on], note
+def press(expected):                                # Enter sends what the key line announces
+    keys, note = lit(); n = len(sent_cw); appr.enter()
+    assert sent_cw[n:] == [expected], (keys, note, sent_cw[n:])
+    return keys, note
+assert press("CQ TEST DA2IT DA2IT K") == (["F1"], "Enter: F1")           # Run, empty call field
+appr.val["call"] = "7030"; assert lit() == ([], "Enter: QSY")
+appr.val["call"] = "DL"; assert lit() == ([], "Enter: -")
+appr.val["call"] = "DL1ABC"
+assert press("DL1ABC 5NN 001 N13") == (["F2", "F5"], "Enter: F5+F2")      # his call + my exchange
+assert appr.log.count() == 0 and appr.focus == EXCH
+assert press("AGN") == (["F8"], "Enter: F8") and appr.log.count() == 0   # nothing received yet
 appr.row = "B"; appr.rig.mode["B"] = "CW"; appr.rig.freq["B"] = 3540000
 assert appr.exch_sent() == "002 N13" and appr.exch_sent("A") == "001 N13"   # 001 is taken by row A
-appr.row = "A"; appr.val["exch"] = "H24"; appr.enter()            # complete: TU and log
-assert sent_cw[-1] == "TU DA2IT" and appr.log.count() == 1
+appr.row = "A"; appr.val["exch"] = "H24"
+assert press("TU DA2IT") == (["F3"], "Enter: F3 + log") and appr.log.count() == 1
 assert appr.log.newest()["exch_s"] == "001 N13" and appr.exch_sent() == "002 N13"
 appr.val["call"] = "DL1AB"; appr.enter(); appr.val["call"] = "DL1ABD"; appr.val["exch"] = "NM"
-appr.enter()                                                     # corrected call is repeated
-assert sent_cw[-2:] == ["DL1AB 5NN 002 N13", "DL1ABD TU DA2IT"] and appr.log.newest()["call"] == "DL1ABD"
-appr.val.update(call="DK5ZZ", exch="H01"); appr.enter()           # all typed first: exchange still goes out
-assert sent_cw[-1] == "DK5ZZ 5NN 003 N13" and appr.log.count() == 2
-appr.enter(); assert sent_cw[-1] == "TU DA2IT" and appr.log.count() == 3
-appr.val.update(call="DK5ZZ", exch="H01"); appr.enter(); appr.enter()    # dupe: warned, not sent TU
+press("DL1ABD TU DA2IT")                                         # corrected call is repeated
+assert sent_cw[-2] == "DL1AB 5NN 002 N13" and appr.log.newest()["call"] == "DL1ABD"
+appr.val.update(call="DK5ZZ", exch="H01")                         # all typed first: exchange still goes out
+press("DK5ZZ 5NN 003 N13"); assert appr.log.count() == 2
+press("TU DA2IT"); assert appr.log.count() == 3
+appr.val.update(call="DK5ZZ", exch="H01"); appr.enter()           # dupe: exchange, then the warning
+assert lit() == ([], "Enter: dupe warning"); appr.enter()
 assert "DUPE" in appr.msg and sent_cw[-1] == "DK5ZZ 5NN 004 N13" and appr.log.count() == 3
-appr.enter(); assert sent_cw[-1] == "TU DA2IT" and appr.log.count() == 4
-appr.cfg["contest"]["cw_tu"] = ""                                  # a message switched off
-appr.val["call"] = "DJ1AA"; appr.enter(); appr.val["exch"] = "X"; n = len(sent_cw); appr.enter()
-assert len(sent_cw) == n and appr.log.count() == 5
+press("TU DA2IT"); assert appr.log.count() == 4
+# the keys themselves: F2 by hand counts as "exchange sent"
+appr.val["call"] = "DL4MAN"; appr.fkey(5); appr.fkey(2)
+assert sent_cw[-2:] == ["DL4MAN", "5NN 005 N13"] and lit() == (["F8"], "Enter: F8")
+appr.val["exch"] = "X01"; press("TU DA2IT"); assert appr.log.newest()["exch_s"] == "005 N13"
+n = len(sent_cw); appr.fkey(5); assert len(sent_cw) == n and "needs a callsign" in appr.msg
+appr.fkey(7); assert sent_cw[-1] == "DA2IT QRZ"
+appr.log.delete(appr.log.newest()["id"])
 # esm_work_dupes = no: a dupe is told QSO B4; a further Enter works it anyway
-appr.esm_work_dupes = False; n_log = appr.log.count(); appr.cfg["contest"]["cw_tu"] = "TU {MYCALL}"
-appr.val["call"] = "DK5ZZ"; appr.enter()
-assert sent_cw[-1] == "DK5ZZ QSO B4" and "told him" in appr.msg and appr.log.count() == n_log
+appr.esm_work_dupes = False; n_log = appr.log.count()
+appr.val["call"] = "DK5ZZ"
+assert press("DK5ZZ QSO B4") == (["F6"], "Enter: F6") and "told him" in appr.msg
+assert appr.log.count() == n_log
 appr.enter(); assert sent_cw[-1].startswith("DK5ZZ 5NN ")       # insisted: normal exchange
-appr.val["exch"] = "H01"; appr.enter()                           # no second dupe question
-assert sent_cw[-1] == "TU DA2IT" and appr.log.count() == n_log + 1
+appr.val["exch"] = "H01"; press("TU DA2IT")                      # no second dupe question
+assert appr.log.count() == n_log + 1
 appr.val["call"] = "DL7NEW"; appr.enter(); assert sent_cw[-1].startswith("DL7NEW 5NN ")   # no dupe
 appr.clear(); appr.esm_mode = "sp"; n = len(sent_cw)
-appr.val["call"] = "DK5ZZ"; assert "dupe, does not call" in appr.esm_preview()
+appr.val["call"] = "DK5ZZ"; assert lit() == ([], "Enter: dupe, no call")
 appr.enter()
 assert len(sent_cw) == n and "not calling" in appr.msg           # S&P: no transmission
-assert appr.esm_preview() == "Enter sends: DA2IT"
-appr.enter(); assert sent_cw[-1] == "DA2IT"                      # second Enter calls anyway
+press("DA2IT")                                                   # second Enter calls anyway
 appr.clear(); appr.esm_mode = "run"; appr.esm_work_dupes = True
-appr.cfg["contest"]["cw_tu"] = ""; appr.log.delete(appr.log.newest()["id"])   # as before this block
-# search & pounce, from the menu
+appr.log.delete(appr.log.newest()["id"])
+appr.fkeys["run"][3] = ("TU", "")                                 # a message switched off
+appr.val["call"] = "DJ1AA"; appr.enter(); appr.val["exch"] = "X"; n = len(sent_cw)
+assert lit() == ([], "Enter: log"); appr.enter()
+assert len(sent_cw) == n and appr.log.count() == 5
+# search & pounce, from the menu: other messages on the same keys
 appr.menus = [appr.main_menu()]; assert appr.menus[0]["items"][5][1] == "Operating: Run, calling CQ (change)"
 appr.menu_key("s"); assert appr.esm_mode == "sp" and "Search & pounce" in appr.msg
-appr.enter(); assert sent_cw[-1] == "DA2IT"                       # empty call field: my call
-appr.val["call"] = "OK1AAA"; appr.enter(); appr.enter()
-assert sent_cw[-2:] == ["DA2IT", "DA2IT"] and appr.log.count() == 5 and appr.focus == EXCH
-appr.val["exch"] = "015"; appr.enter()
-assert sent_cw[-1] == "TU 5NN 006 N13" and appr.log.newest()["call"] == "OK1AAA"
+assert appr.key_line()[0][0] == (" S&P ", False) and (" F1 QRL? ", False) in appr.key_line()[0]
+assert press("DA2IT") == (["F4"], "Enter: F4")                    # empty call field: my call
+appr.val["call"] = "OK1AAA"; press("DA2IT"); press("DA2IT")
+assert appr.log.count() == 5 and appr.focus == EXCH
+appr.val["exch"] = "015"
+assert press("TU 5NN " + appr.exch_sent()) == (["F2"], "Enter: F2 + log")
+assert appr.log.newest()["call"] == "OK1AAA"
+appr.fkey(1); assert sent_cw[-1] == "QRL? DE DA2IT"
+appr.fkey(7); assert "F7 has no message in S&P" in appr.msg
 appr.menus = [appr.main_menu()]; assert "Search & pounce" in appr.menus[0]["items"][5][1]
-appr.menu_key("s"); assert appr.esm_mode == "run"
+appr.menu_key("s"); assert appr.esm_mode == "run" and (" F1 CQ ", True) in appr.key_line()[0]
 # no required field: the second Enter always logs
-appr.esm_required = []; appr.cfg["contest"]["cw_tu"] = "TU {MYCALL}"
+appr.esm_required = []; appr.fkeys["run"][3] = ("TU", "TU {MYCALL}")
 appr.val["call"] = "DL9XX"; appr.enter(); assert appr.log.count() == 6
-appr.enter(); assert appr.log.count() == 7 and sent_cw[-1] == "TU DA2IT"
-appr.esm_required = ["exch"]; del sent_cw[:]
-# ESM off: Enter only logs; F1 still sends
+press("TU DA2IT"); assert appr.log.count() == 7
+appr.esm_required = ["exch"]
+appr.esm_empty = 7; assert press("DA2IT QRZ") == (["F7"], "Enter: F7")   # esm_empty = f7
+appr.esm_empty = 1; del sent_cw[:]
+# ESM off: Enter only logs; the keys still send
 appr.menus = [appr.main_menu()]; assert appr.menus[0]["items"][4][1] == "ESM, Enter sends message: on (change)"
 appr.menu_key("e"); assert not appr.enter_sends() and "ESM off" in appr.msg
-assert appr.esm_preview() == ""
+assert lit() == ([], "")
 appr.val["call"] = "DL2XYZ"; appr.enter(); assert appr.log.count() == 8 and not sent_cw
 appr.enter(); assert not sent_cw and appr.msg == "Not a valid callsign."
 saved.read(os.path.join(cdir, "config.ini")); assert saved["cw"]["enter_sends"] == "no"
 assert not m.App(m.load_config(cdir, "t"), m.Log(os.path.join(work, "r2.db"))).enter_sends()   # kept
 appr.menus = [appr.main_menu()]; assert "off" in appr.menus[0]["items"][4][1]
-appr.menu_key("e"); appr.enter(); assert sent_cw == ["DA2IT QRZ"]
-appr.send_message("cw_f1"); assert sent_cw[-1] == "CQ TEST DA2IT DA2IT K"
+appr.fkey(1); assert sent_cw == ["CQ TEST DA2IT DA2IT K"]
+appr.menu_key("e"); appr.enter(); assert sent_cw == ["CQ TEST DA2IT DA2IT K"] * 2
 appr.rig.online = False
-assert appr.esm_preview() == "ESM: radio not in CW - Enter only logs"
+assert lit() == ([], "ESM: not in CW, Enter logs")
 # periodic backup
 bdir = os.path.join(work, "bk"); c9 = m.load_config(work, "wsa"); c9["backup"]["folder"] = bdir
 c9["backup"]["keep"] = "2"

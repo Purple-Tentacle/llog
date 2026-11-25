@@ -1431,6 +1431,35 @@ class Log:
 
 
 # ------------------------------------------------------------------ config
+# CW message keys F1 to F10, "label, text", for running and for search and
+# pounce. Key numbers and meaning follow N1MM Logger.
+FKEY_DEFAULTS = {
+    "run": {1: "CQ, CQ TEST {MYCALL} {MYCALL} K", 2: "Exch, {RST} {EXCH}",
+            3: "TU, TU {MYCALL}", 4: "MyCall, {MYCALL}", 5: "HisCall, {CALL}",
+            6: "B4, {CALL} QSO B4", 7: "QRZ, {MYCALL} QRZ", 8: "Agn, AGN",
+            9: "Nr?, NR?", 10: "Call?, CL?"},
+    "sp": {1: "QRL?, QRL? DE {MYCALL}", 2: "Exch, TU {RST} {EXCH}",
+           3: "TU, TU", 4: "MyCall, {MYCALL}", 5: "HisCall, {CALL}",
+           6: "B4, QSO B4", 7: "", 8: "Agn, AGN", 9: "Nr?, NR?",
+           10: "Call?, CL?"}}
+FKEY_CONFIG = {f"{mode}_f{n}": text for mode, keys in FKEY_DEFAULTS.items()
+               for n, text in keys.items()}
+
+
+def message_keys(cfg):
+    """{mode: {number: (label, text)}} from the run_f1 ... sp_f10 lines."""
+    keys = {}
+    for mode in ("run", "sp"):
+        keys[mode] = {}
+        for n in range(1, 11):
+            value = cfg["contest"].get(f"{mode}_f{n}", "").strip()
+            label, comma, text = value.partition(",")
+            if not comma:                     # no label given: text only
+                label, text = value[:8], value
+            keys[mode][n] = (label.strip(), text.strip())
+    return keys
+
+
 def ask(prompt, default=""):
     answer = input(f"{prompt} [{default}]: " if default else f"{prompt}: ").strip()
     return "" if answer == "-" else (answer or default)
@@ -1488,13 +1517,7 @@ def load_config(config_dir, contest):
                                "serial_start": "1", "worked_before": "",
                                "mult_country": "no", "mult_calls": "",
                                "mult_prefix": "no", "mult_exclude": "",
-                               "cw_f1": "CQ TEST {MYCALL} {MYCALL} K",
-                               "cw_enter": "{MYCALL} QRZ",
-                               "cw_call": "{CALL} 5NN {EXCH}",
-                               "cw_again": "AGN", "cw_tu": "TU {MYCALL}",
-                               "cw_mycall": "{MYCALL}",
-                               "cw_sp_exchange": "TU 5NN {EXCH}",
-                               "cw_dupe": "{CALL} QSO B4",
+                               **FKEY_CONFIG, "esm_empty": "f1",
                                "esm_work_dupes": "yes",
                                "esm_required": "exch", "esm_start": "run",
                                "mode": "", "category_band": "",
@@ -1566,8 +1589,8 @@ COLUMNS = (("ts", 19, "UTC"), ("call", 13, "Call"), ("freq", 9, "kHz"),
            ("mode", 5, "Mode"), ("rst_s", 4, "Sent"), ("exch_s", 7, "Exch"),
            ("rst_r", 4, "Rcvd"), ("exch", 12, "Exch"), ("loc", 8, "Locator"))
 SPACE_OK = ("exch", "exch_s", "ts")      # cells that may contain a space
-# Alt-M: the main loop turns "Esc m" into this token; a few terminals send
-# an 8-bit character for it
+# Alt-M: the main loop turns "Esc m" into this token (and other letters into
+# ALT-<letter>); a few terminals send an 8-bit character for Alt-M
 ALT_M = ("ALT-M", "\u00ed", "\u00cd", "\u00b5")
 ENTRY_X = 26                             # column where the entry fields start
 
@@ -1633,6 +1656,11 @@ class App:
             self.esm_work_dupes = con.getboolean("esm_work_dupes", True)
         except ValueError:
             sys.exit("Contest file: esm_work_dupes must be yes or no")
+        self.fkeys = message_keys(cfg)
+        empty = re.fullmatch(r"f(\d+)", con.get("esm_empty", "f1").strip().lower())
+        if not empty or not 1 <= int(empty.group(1)) <= 10:
+            sys.exit("Contest file: esm_empty must be a key from f1 to f10")
+        self.esm_empty = int(empty.group(1))
         if self.esm_mode not in ("run", "sp") or set(self.esm_required) - {"exch", "loc"}:
             sys.exit("Contest file: esm_start must be run or sp, esm_required "
                      "a list of exch and loc (or empty)")
@@ -1798,8 +1826,9 @@ class App:
 
     def message_text(self, template):
         """CW message with its placeholders filled in."""
+        report = (self.val["rst_s"] or self.default_rst()).replace("9", "N")
         values = {"MYCALL": self.mycall, "CALL": self.val["call"],
-                  "EXCH": self.exch_sent()}
+                  "EXCH": self.exch_sent(), "RST": report}
         text = re.sub(r"\{(\w+)\}",
                       lambda m: values.get(m.group(1).upper(), ""), template)
         return " ".join(text.upper().split())
@@ -1807,17 +1836,19 @@ class App:
     def cw_ready(self):
         return self.rig.online and (self.rig.mode.get(self.row) or "") in ("CW", "CWR")
 
-    def send_message(self, key, quiet=False, prefix=""):
-        """Sends the CW message 'key' of the contest file. quiet: an empty
-        message is simply skipped. prefix: text sent in front of it."""
-        text = self.message_text(self.cfg["contest"].get(key, ""))
-        if prefix and text:
-            text = f"{prefix} {text}"
+    def keys_text(self, numbers, prefix=""):
+        """Text of the given function keys in the current operating mode,
+        joined to one transmission; keys without a message are left out."""
+        parts = [prefix] + [self.message_text(self.fkeys[self.esm_mode][n][1])
+                            for n in numbers]
+        return " ".join(part for part in parts if part)
+
+    def send_text(self, text):
+        """Hands a CW text to the radio. Returns True if it went out."""
         raw_mode = self.rig.mode.get(self.row) or ""
         if not text:
-            if not quiet:
-                self.msg = f"No message: set {key} in the contest file."
-        elif not self.rig.online:
+            return False
+        if not self.rig.online:
             self.msg = "Rig offline - cannot send CW."
         elif raw_mode not in ("CW", "CWR"):
             self.msg = f"Radio is in {raw_mode or 'an unknown mode'}, not CW - nothing sent."
@@ -1827,6 +1858,25 @@ class App:
             self.msg = f"CW: {text} ...  (Esc stops)"
             # rough length of the transmission at 12 WPM, for the Esc key
             self.cw_until = time.time() + len(text) * 1.2 + 2
+            return True
+        return False
+
+    def fkey(self, number):
+        """F1 to F10: send the message of that key for the current mode."""
+        label, template = self.fkeys[self.esm_mode][number]
+        call = self.val["call"]
+        mode = "Run" if self.esm_mode == "run" else "S&P"
+        if not template:
+            self.msg = f"F{number} has no message in {mode}."
+        elif "{CALL}" in template.upper() and not is_call(call):
+            self.msg = f"F{number} {label} needs a callsign in the call field."
+        elif self.send_text(self.keys_text([number])):
+            entry = self.entry[self.row]
+            if "{EXCH}" in template.upper() and is_call(call):
+                # the exchange has gone out: keep its number for this QSO
+                entry["esm_exch"] = entry["esm_exch"] or self.exch_sent()
+                if self.esm_mode == "run":
+                    entry["esm_sent"] = call
 
     def switch_row(self):
         self.row = "B" if self.row == "A" else "A"
@@ -1840,9 +1890,9 @@ class App:
         if self.focus == 0 and not call and self.spot and self.spot_take():
             pass
         elif not call and esm:
-            # ESM, empty call field: QRZ when running, own call in S&P
-            self.send_message("cw_enter" if self.esm_mode == "run"
-                              else "cw_mycall", quiet=True)
+            # ESM, empty call field: CQ when running, own call in S&P
+            keys, prefix, _, _ = self.esm_next()
+            self.send_text(self.keys_text(keys, prefix))
         elif self.focus == 0 and parse_freq(call) and not is_call(call):
             self.set_freq(parse_freq(call))
             self.val["call"] = ""
@@ -1863,19 +1913,19 @@ class App:
         else:
             self.log_qso(call)
 
-    ESM_KEYS = {"dupe_run": "cw_dupe", "mycall": "cw_mycall", "call": "cw_call",
-                "again": "cw_again"}
+    # function keys that Enter sends for each ESM step, as in N1MM Logger
+    ESM_KEYS = {"dupe_run": [6], "mycall": [4], "call": [5, 2], "again": [8]}
 
     def esm_step(self, call):
         """What Enter does next for the callsign in the active row (ESM, CW):
 
-        Run:  callsign              -> 'call'   his call + my exchange
-              again, still nothing  -> 'again'
-              required fields there -> 'finish' TU, QSO logged
-        S&P:  callsign              -> 'mycall' my call, again on each Enter
-              required fields there -> 'finish' my exchange, QSO logged
-        Dupes with esm_work_dupes = no: 'dupe_run' (QSO B4) or 'dupe_sp'
-        (no call) first; 'dupe_warn' is the usual question before logging.
+        Run:  callsign              -> 'call'   F5 + F2, his call + my exchange
+              again, still nothing  -> 'again'  F8
+              required fields there -> 'finish' F3, QSO logged
+        S&P:  callsign              -> 'mycall' F4, again on each Enter
+              required fields there -> 'finish' F2, QSO logged
+        Dupes with esm_work_dupes = no: 'dupe_run' (F6) or 'dupe_sp' (no
+        call) first; 'dupe_warn' is the usual question before logging.
         """
         entry = self.entry[self.row]
         run = self.esm_mode == "run"
@@ -1891,81 +1941,89 @@ class App:
             return "dupe_warn"
         return "finish"
 
-    def esm_finish_message(self, call):
-        """(message key, text in front) for the Enter that logs the QSO; a
-        callsign corrected after the exchange went out is repeated."""
+    def esm_next(self):
+        """What Enter would do now: (function keys it sends, text sent in
+        front of them, whether it logs, short note for the key line)."""
+        call = self.val["call"]
         run = self.esm_mode == "run"
-        fixed = run and self.entry[self.row]["esm_sent"] != call
-        return ("cw_tu" if run else "cw_sp_exchange"), (call if fixed else "")
+        if not call:
+            if self.focus == 0 and self.spot:
+                return [], "", False, f"takes {self.spot}"
+            return ([self.esm_empty] if run else [4]), "", False, ""
+        if self.focus == 0 and not is_call(call) and (parse_freq(call)
+                                                      or call in TYPED_MODES):
+            return [], "", False, "QSY"
+        if (not is_call(call) or not self.freq()
+                or (self.val["loc"] and not is_locator(self.val["loc"]))):
+            return [], "", False, "-"
+        step = self.esm_step(call)
+        if step == "dupe_sp":
+            return [], "", False, "dupe, no call"
+        if step == "dupe_warn":
+            return [], "", False, "dupe warning"
+        if step == "finish":
+            # a callsign corrected after the exchange went out is repeated
+            fixed = run and self.entry[self.row]["esm_sent"] != call
+            return ([3] if run else [2]), (call if fixed else ""), True, ""
+        return self.ESM_KEYS[step], "", False, ""
 
     def esm_enter(self, call):
         """ESM in CW: Enter sends the next message of the QSO and logs it
         once the required fields are filled."""
         entry = self.entry[self.row]
         step = self.esm_step(call)
+        keys, prefix, logs, _ = self.esm_next()
         if step in ("dupe_run", "dupe_sp"):
             # worked before: say so instead of starting the QSO. A further
             # Enter works the station anyway, without asking again.
             entry["dupe_told"] = self.dupe_ok = call
             text = self.dupe_text(self.dupe())
             if step == "dupe_run":
-                self.send_message("cw_dupe", quiet=True)
+                self.send_text(self.keys_text(keys))
                 self.msg = text + " - told him. Enter again works him anyway."
             else:
                 self.msg = text + " - not calling. Enter again calls anyway."
             return
+        if step == "dupe_warn":
+            self.dupe_ok = call
+            self.msg = self.dupe_text(self.dupe()) + " - Enter again logs it anyway."
+            return
         if not entry["esm_exch"]:
             # the exchange (running number) stays the same for this QSO
             entry["esm_exch"] = self.exch_sent()
-        if step in ("mycall", "call", "again"):
-            self.send_message(self.ESM_KEYS[step], quiet=True)
-            if step == "call":
-                entry["esm_sent"] = call
-            missing = [f for f in self.esm_required if not self.val[f].strip()]
-            self.focus = FIELDS.index((missing or ["exch"])[0])
-        elif step == "dupe_warn":
-            self.dupe_ok = call
-            self.msg = self.dupe_text(self.dupe()) + " - Enter again logs it anyway."
-        else:
-            key, prefix = self.esm_finish_message(call)
-            self.send_message(key, quiet=True, prefix=prefix)
+        self.send_text(self.keys_text(keys, prefix))
+        if logs:
             sent = self.msg
             self.log_qso(call)
             if sent.startswith("CW:"):
                 self.msg += "  -  " + sent
+        else:
+            if step == "call":
+                entry["esm_sent"] = call
+            missing = [f for f in self.esm_required if not self.val[f].strip()]
+            self.focus = FIELDS.index((missing or ["exch"])[0])
 
-    def esm_preview(self):
-        """One line saying what Enter would do now."""
-        if not self.enter_sends() or self.edit:
-            return ""
-        if not self.cw_ready():
-            return "ESM: radio not in CW - Enter only logs"
-        call = self.val["call"]
-
-        def text(key, prefix=""):
-            message = self.message_text(self.cfg["contest"].get(key, ""))
-            return " ".join(x for x in (prefix, message) if x) or "(nothing)"
-
-        if not call:
-            if self.focus == 0 and self.spot:
-                return f"Enter takes {self.spot} from the panel"
-            return "Enter sends: " + text("cw_enter" if self.esm_mode == "run"
-                                          else "cw_mycall")
-        if self.focus == 0 and not is_call(call) and (parse_freq(call)
-                                                      or call in TYPED_MODES):
-            return "Enter sets the frequency or mode"
-        if (not is_call(call) or not self.freq()
-                or (self.val["loc"] and not is_locator(self.val["loc"]))):
-            return "Enter: nothing yet (callsign, frequency or locator not valid)"
-        step = self.esm_step(call)
-        if step == "dupe_sp":
-            return "Enter: dupe, does not call (Enter again calls anyway)"
-        if step == "dupe_warn":
-            return "Enter: dupe warning (Enter again sends and logs)"
-        if step == "finish":
-            return "Enter sends: " + text(*self.esm_finish_message(call)) \
-                + "   and logs the QSO"
-        return "Enter sends: " + text(self.ESM_KEYS[step])
+    def key_line(self):
+        """The message key line: [(text, highlighted)] segments and a note at
+        the end. Keys that Enter would send now (ESM) are highlighted."""
+        keys, note = [], ""
+        if self.enter_sends() and not self.edit:
+            if self.cw_ready():
+                keys, prefix, logs, note = self.esm_next()
+                names = "+".join(f"F{n}" for n in keys
+                                 if self.fkeys[self.esm_mode][n][1])
+                note = "Enter: " + (" + ".join(
+                    x for x in (names, "log" if logs else "", note) if x) or "-")
+            else:
+                note = "ESM: not in CW, Enter logs"
+        mode = "RUN" if self.esm_mode == "run" else "S&P"
+        segments = [(f" {mode} ", False)]
+        for number in range(1, 11):
+            label, template = self.fkeys[self.esm_mode][number]
+            if template:
+                segments.append((f" F{number} {label} ", number in keys))
+        segments.append((" F12 Wipe ", False))
+        return segments, note
 
     def log_qso(self, call):
         info = self.qrz.info(call) or {}
@@ -2023,7 +2081,7 @@ class App:
         self.edit = rows[index]
         self.eval = cells(self.edit)
         self.msg = (f"Editing QSO #{self.edit['id']} - Tab next cell, Enter "
-                    "saves, Esc cancels, Up/Down other QSO, F8 deletes it.")
+                    "saves, Esc cancels, Up/Down other QSO, Alt-D deletes it.")
 
     def edited(self):
         """Valid frequency/mode/time typed while editing; bad ones are left out."""
@@ -2137,7 +2195,7 @@ class App:
                           ("o", f"Start with llog: {auto} (change)", "rig_auto")]}
 
     def enter_sends(self):
-        """Whether Enter in an empty call field sends the cw_enter message."""
+        """Whether ESM is on: Enter sends the CW messages of the QSO."""
         return self.cfg["cw"].get("enter_sends", "yes").strip().lower() in (
             "yes", "true", "on", "1")
 
@@ -2339,13 +2397,17 @@ class App:
         if ch in ALT_M:
             self.menus = [self.main_menu()]
             self.msg = "Menu: Up/Down, Enter selects, Esc goes back."
-        elif ch == curses.KEY_F1:
-            self.send_message("cw_f1")
-        elif ch == curses.KEY_F6:
+        elif isinstance(ch, int) and curses.KEY_F1 <= ch <= curses.KEY_F10:
+            self.fkey(ch - curses.KEY_F0)
+        elif ch == curses.KEY_F12:
+            self.clear()
+            self.spot = ""
+            self.msg = "Cleared."
+        elif ch == "ALT-S":
             self.spot_send()
-        elif ch == curses.KEY_F7:
+        elif ch == "ALT-B":
             self.toggle_view()
-        elif ch == curses.KEY_F9:
+        elif ch == "ALT-L":
             self.store_for_later()
         elif ch == curses.KEY_DC:
             self.spot_delete()
@@ -2357,7 +2419,7 @@ class App:
             self.select(-1)
         elif ch == curses.KEY_DOWN:
             self.select(+1)
-        elif ch == curses.KEY_F8:
+        elif ch == "ALT-D":
             rows = [self.edit or self.log.newest()]
             if rows[0]:
                 which = "QSO #%d" % rows[0]["id"] if self.edit else "last QSO"
@@ -2484,7 +2546,7 @@ class App:
                        else "."))
 
     def store_for_later(self):
-        """F9 / Ctrl-J: note the station in the call field on the current
+        """Alt-L / Ctrl-J: note the station in the call field on the current
         frequency, to come back to it later."""
         call = self.val["call"]
         if not is_call(call):
@@ -2511,7 +2573,7 @@ class App:
                     if self.view == "map" else "Panel: newest first.")
 
     def spot_send(self):
-        """F6: spot the station in the call field, or else the last QSO."""
+        """Alt-S: spot the station in the call field, or else the last QSO."""
         call, hz = self.val["call"], self.freq()
         if not is_call(call):
             last = self.log.newest()
@@ -2605,8 +2667,7 @@ class App:
             else "RIG offline (manual)"
         utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") + "Z"
         head = (f" {self.mycall} {self.cfg['contest']['contest']} | "
-                + ("" if not self.enter_sends() else
-                   "RUN | " if self.esm_mode == "run" else "S&P | ") +
+                + ("RUN | " if self.esm_mode == "run" else "S&P | ") +
                 f"Row {self.row} {band_of(self.freq() or 0) or '-'} "
                 f"{self.mode()} | {rig} | {self.score_text()}"
                 f"QSOs: {self.log.count()} | {utc} ")
@@ -2641,8 +2702,8 @@ class App:
         if panel_x:
             band = band_of(self.freq() or 0) or "?"
             # rows start with a one-character flag column, hence the +1
-            put(2, panel_x + 1, f"Band map {band} (F7: newest first)"
-                if self.view == "map" else f"Newest {band} (F7: band map)",
+            put(2, panel_x + 1, f"Band map {band} (Alt-B: newest first)"
+                if self.view == "map" else f"Newest {band} (Alt-B: band map)",
                 curses.A_BOLD)
             spots = self.panel_rows()
             line = 3
@@ -2652,7 +2713,7 @@ class App:
                 line += 1
             elif not spots:
                 put(line, panel_x + 1, "nothing on this band yet")
-            room = max(h - 2 - line, 1)             # down to the message line
+            room = max(h - 3 - line, 1)             # down to the message line
             calls = [spot["call"] for spot in spots]
             kinds = ["here" if spot.get("here") else spot["kind"]
                      for spot in spots]
@@ -2775,9 +2836,7 @@ class App:
                 x += max(WIDTHS[name], len(LABELS[name])) + 2
             put(line, x, self.exch_sent(vfo) or "-")
 
-        # ESM: what the Enter key would send now
         scp_x = x + 13
-        put(h - 3, 1, self.esm_preview()[:max(min(scp_x, left_w) - 3, 0)])
 
         # check partial: between the entry fields and the panel
         scp_w = left_w - scp_x
@@ -2794,7 +2853,7 @@ class App:
             for call in matches:
                 if col + len(call) > scp_x + scp_w:
                     row, col = row + 1, scp_x
-                    if row > h - 3:
+                    if row > h - 4:
                         break
                 put(row, col, call, curses.A_BOLD | curses.A_UNDERLINE
                     if call == typed else 0)
@@ -2802,15 +2861,24 @@ class App:
 
         if self.prompt:
             line = self.prompt["text"] + self.prompt["value"]
-            put(h - 2, 1, line, curses.A_BOLD)
-            cursor = (h - 2, min(1 + len(line), w - 2))
+            put(h - 3, 1, line, curses.A_BOLD)
+            cursor = (h - 3, min(1 + len(line), w - 2))
         else:
-            put(h - 2, 1, self.msg)
-        put(h - 1, 0, " Enter log | Tab next | Esc clear | F1 CQ (CW) | \\ row A/B | "
+            put(h - 3, 1, self.msg)
+        # message keys: F1 to F10 for the current operating mode; the keys
+        # Enter would send now (ESM) stand out, with a note at the right
+        segments, note = self.key_line()
+        put(h - 2, 0, " " * (w - 1), curses.A_REVERSE)
+        x = 0
+        for text, lit in segments:
+            put(h - 2, x, text, curses.A_BOLD if lit else curses.A_REVERSE)
+            x += len(text)
+        if note and x + len(note) + 3 < w:
+            put(h - 2, w - len(note) - 2, note, curses.A_REVERSE | curses.A_BOLD)
+        put(h - 1, 0, " Enter log | Tab next | Esc clear | \\ row A/B | "
                       "<kHz>/<mode> Enter QSY | Up edit | PgUp/PgDn panel | "
-                      "F6 spot | F7 map | F9 store | F8 delete | "
-                      "Alt-M menu (export, backup, radio, ATU, quit) ".ljust(w - 1),
-            curses.A_REVERSE)
+                      "Alt-S spot | Alt-B band map | Alt-L store | Alt-D delete | "
+                      "Alt-M menu ".ljust(w - 1), curses.A_REVERSE)
         if self.menus:                   # menu box in the middle of the screen
             menu = self.menus[-1]
             rows = ([(text, None) for text in menu["info"]]
@@ -2871,11 +2939,13 @@ class App:
             if ch == curses.KEY_RESIZE:
                 continue
             keys = [ch]
-            if ch == "\x1b":             # Alt-M arrives as Esc directly followed by m
+            if ch == "\x1b":             # Alt-<letter> arrives as Esc + the letter
                 scr.timeout(30)
                 try:
                     follow = scr.get_wch()
-                    keys = ["ALT-M"] if follow in ("m", "M") else [ch, follow]
+                    keys = [f"ALT-{follow.upper()}"] if (
+                        isinstance(follow, str) and follow.isalpha()
+                        and len(follow) == 1) else [ch, follow]
                 except curses.error:
                     pass                 # a plain Esc
                 scr.timeout(200)

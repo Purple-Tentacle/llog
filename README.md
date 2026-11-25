@@ -171,37 +171,48 @@ frequencies or modes, not listening to both.
 llog can have the radio send the CW of a contest QSO. The radio keys the text
 itself at its own keyer speed; llog only hands it over through `rigctld`.
 
-**F1** calls CQ (`cw_f1`).
+### Message keys
 
-**ESM ("Enter sends message").** With ESM on, the Enter key sends whatever
-comes next in the QSO, depending on what is in the entry row, and logs the
-QSO when it is complete. You type the callsign, press Enter, type what you
-receive, press Enter.
+F1 to F10 send messages. The keys and their meaning follow N1MM Logger, and
+there is one set for **running** (you call CQ and stations answer you) and
+one for **search and pounce** (you answer someone's CQ):
 
-When you are **running** (you called CQ and stations answer you):
-
-| Entry row | Enter sends | and then |
+| Key | Running | Search and pounce |
 | --- | --- | --- |
-| call field empty | `cw_enter`: `DA2IT QRZ` | |
-| callsign typed | `cw_call`: his call and your exchange, `DL1ABC 5NN N13` | cursor moves to the exchange field |
-| Enter again, exchange still missing | `cw_again`: `AGN` | |
-| received exchange typed | `cw_tu`: `TU DA2IT` | the QSO is logged |
+| F1 | CQ: `CQ TEST DA2IT DA2IT K` | QRL?: `QRL? DE DA2IT` |
+| F2 | Exch: `5NN N13` | Exch: `TU 5NN N13` |
+| F3 | TU: `TU DA2IT` | TU: `TU` |
+| F4 | MyCall: `DA2IT` | MyCall: `DA2IT` |
+| F5 | HisCall: the callsign in the call field | the same |
+| F6 | B4: `DL1ABC QSO B4` | B4: `QSO B4` |
+| F7 | QRZ: `DA2IT QRZ` | (none) |
+| F8 | Agn: `AGN` | Agn: `AGN` |
+| F9 | Nr?: `NR?` | Nr?: `NR?` |
+| F10 | Call?: `CL?` | Call?: `CL?` |
+| F12 | Wipe: clears the entry row | the same |
 
-When you **search and pounce** (you answer someone's CQ):
+Switch between the two sets in the menu: Alt-M, then S ("Operating"). The
+header shows `RUN` or `S&P`.
 
-| Entry row | Enter sends | and then |
+The second line from the bottom of the screen shows the message keys of the
+current set with their labels. Keys without a message are left out.
+
+### ESM ("Enter sends message")
+
+With ESM on, the Enter key sends whatever comes next in the QSO, depending
+on what is in the entry row, and logs the QSO when it is complete. You type
+the callsign, press Enter, type what you receive, press Enter.
+
+| Entry row | Running: Enter sends | Search and pounce: Enter sends |
 | --- | --- | --- |
-| call field empty, or callsign typed | `cw_mycall`: `DA2IT` (again on every Enter) | cursor moves to the exchange field |
-| received exchange typed | `cw_sp_exchange`: `TU 5NN N13` | the QSO is logged |
+| call field empty | F1 | F4 |
+| callsign typed | F5 + F2 as one transmission, `DL1ABC 5NN N13` | F4, again on every Enter |
+| Enter again, received exchange still missing | F8 | F4 |
+| received exchange typed | F3, and the QSO is logged | F2, and the QSO is logged |
 
-Switch between the two in the menu: Alt-M, then S ("Operating"). The header
-shows `RUN` or `S&P`.
-
-A line under the entry rows always shows what the next Enter would do, with
-the text exactly as it would be sent, for example
-`Enter sends: DL1ABC 5NN N13` or `Enter sends: TU DA2IT   and logs the QSO`.
-It also says when Enter would not transmit: outside CW, on a dupe warning,
-or when the callsign is not complete yet.
+On the message key line, the keys that Enter would send now are highlighted,
+and the right end of the line says it in words: `Enter: F5+F2`,
+`Enter: F3 + log`, `Enter: dupe warning`. It follows what you type.
 
 Details:
 
@@ -209,30 +220,55 @@ Details:
   message repeats it: `DL1ABD TU DA2IT`.
 - If you typed callsign and exchange before the first Enter, that Enter still
   sends your exchange, and the next one closes and logs.
+- Sending F2 by hand counts: after F5 and F2, Enter continues with F8 or F3.
 - A running number is fixed when it is first sent and stays with that QSO
   until it is logged; the other entry row gets the next number meanwhile.
 - Dupes: by default a station you have already worked is handled like any
   other caller, and you get the usual warning on the Enter that would log
   it; press Enter again to send the closing message and log it anyway. With
   `esm_work_dupes = no` in the contest file, the first Enter on a dupe sends
-  `cw_dupe` (`DL1ABC QSO B4`) and no exchange when you are running, and
-  sends nothing when you search and pounce. A second Enter works the station
-  anyway, for the caller who insists.
-- `esm_required` in the contest file names the fields that must be filled
-  before Enter logs: `exch` (default), `loc`, both, or nothing. With nothing
-  required, the second Enter always logs.
+  F6 and no exchange when you are running, and sends nothing when you search
+  and pounce. A second Enter works the station anyway.
+- `esm_required` names the fields that must be filled before Enter logs:
+  `exch` (default), `loc`, both, or nothing. With nothing required, the
+  second Enter always logs.
+- `esm_empty` is the key Enter sends in an empty call field when running:
+  `f1` (CQ, default) or for example `f7` (QRZ).
 
-The messages and settings in the contest file, with their defaults:
+ESM is switched on and off in the menu (Alt-M, then E). It is on by default,
+and the choice is kept in `config.ini` (`enter_sends` in the `[cw]` section).
+With ESM off, Enter only logs. The message keys work either way.
+
+### Settings in the contest file
+
+Each key is a line `run_f<n>` or `sp_f<n>` with a label for the key line, a
+comma, and the text. These are the defaults; a contest file only needs the
+lines it changes.
 
 ```
-cw_f1 = CQ TEST {MYCALL} {MYCALL} K
-cw_enter = {MYCALL} QRZ
-cw_call = {CALL} 5NN {EXCH}
-cw_again = AGN
-cw_tu = TU {MYCALL}
-cw_mycall = {MYCALL}
-cw_sp_exchange = TU 5NN {EXCH}
-cw_dupe = {CALL} QSO B4
+run_f1 = CQ, CQ TEST {MYCALL} {MYCALL} K
+run_f2 = Exch, {RST} {EXCH}
+run_f3 = TU, TU {MYCALL}
+run_f4 = MyCall, {MYCALL}
+run_f5 = HisCall, {CALL}
+run_f6 = B4, {CALL} QSO B4
+run_f7 = QRZ, {MYCALL} QRZ
+run_f8 = Agn, AGN
+run_f9 = Nr?, NR?
+run_f10 = Call?, CL?
+
+sp_f1 = QRL?, QRL? DE {MYCALL}
+sp_f2 = Exch, TU {RST} {EXCH}
+sp_f3 = TU, TU
+sp_f4 = MyCall, {MYCALL}
+sp_f5 = HisCall, {CALL}
+sp_f6 = B4, QSO B4
+sp_f7 =
+sp_f8 = Agn, AGN
+sp_f9 = Nr?, NR?
+sp_f10 = Call?, CL?
+
+esm_empty = f1
 esm_work_dupes = yes
 esm_required = exch
 esm_start = run
@@ -242,14 +278,11 @@ esm_start = run
 | --- | --- |
 | `{MYCALL}` | your callsign |
 | `{CALL}` | the callsign in the call field |
+| `{RST}` | the report you send, with N for 9: `5NN` |
 | `{EXCH}` | the exchange you send, including a running number |
 
-An empty line such as `cw_tu =` switches that message off; the step still
-happens, without a transmission.
-
-ESM is switched on and off in the menu (Alt-M, then E). It is on by default,
-and the choice is kept in `config.ini` (`enter_sends` in the `[cw]` section).
-With ESM off, Enter only logs. F1 is not affected by the switch.
+A line with nothing after the `=` removes that key. ESM then skips that
+message but still does the step, for example logging without a TU.
 
 All of this only happens while the radio is in CW; in any other mode, or
 without a radio connection, nothing is transmitted and Enter logs as usual.
@@ -270,7 +303,7 @@ first. The command is chosen by `tune_command` in the `[rig]` section:
 ## DX cluster and band map
 
 A panel on the right side of the screen, from the top down to the message
-line, shows what is on the band of the current entry row. It follows the band when you QSY or switch rows, and F7 switches
+line, shows what is on the band of the current entry row. It follows the band when you QSY or switch rows, and Alt-B switches
 between two views:
 
 - **Newest first:** cluster spots and stations you stored for later, newest
@@ -286,7 +319,7 @@ between two views:
 Stations you have already worked on that band (by the contest's dupe rules)
 are shown dimmed; stored stations are marked with `*`.
 
-**Storing a station for later.** Type the callsign and press F9 (or Ctrl-J):
+**Storing a station for later.** Type the callsign and press Alt-L (or Ctrl-J):
 the station is noted on the current frequency and mode, together with the
 received exchange and the locator if you had already entered them, and the
 entry row is cleared. When you take the station from the panel later, the
@@ -303,7 +336,7 @@ takes the highlighted entry: the current row is tuned to its frequency (and
 mode, for a stored station) and the callsign is filled in. Esc removes the
 highlight.
 
-F6 spots a station on the cluster: the callsign in the call field on the
+Alt-S spots a station on the cluster: the callsign in the call field on the
 current row's frequency, or, if the call field is empty, the last logged QSO
 on the frequency it was logged with. llog asks for an optional comment; Enter
 sends the spot, Esc cancels. A spot is public and cannot be withdrawn. The
@@ -342,7 +375,7 @@ python3 tools/fake_cluster.py
 
 Then set `host = 127.0.0.1` and `port = 7300` in the `[cluster]` section. It
 sends a made-up spot every 20 seconds, answers the startup `sh/dx`, and
-echoes the spots you send with F6. With `call = REFUSE` it refuses your
+echoes the spots you send with Alt-S. With `call = REFUSE` it refuses your
 spots, so you can see how llog shows that.
 
 ## Configuration
@@ -569,7 +602,7 @@ prefix (`EA8/DL1ABC` is Canary Islands); `/MM` has no country.
 | Option | Example | Meaning |
 | --- | --- | --- |
 | `call` | `OK/DA2IT` | Callsign for this contest, if it differs from the one in `config.ini` |
-| `cw_...`, `esm_...` | | CW messages and ESM settings, see "CW messages and ESM" |
+| `run_f1` ... `sp_f10`, `esm_...` | | CW message keys and ESM settings, see "CW messages and ESM" |
 | `mode` | `RTTY` | Log every QSO with this mode, whatever the radio reports (useful when the radio is in a generic data mode) |
 | `category_band`, `category_mode`, `category_power` | `ALL`, `RTTY`, `LOW` | Written as `CATEGORY-BAND` etc. into the Cabrillo header |
 
@@ -586,25 +619,31 @@ The score is your claimed score; the organiser's evaluation is what counts.
 
 ## Keys
 
+The bottom line of the screen lists the keys for logging and the panel, the
+line above it the CW message keys.
+
 | Key | Action |
 | --- | --- |
-| Enter | Log the QSO. In CW with ESM on: send the CW messages first (see "CW messages") |
-| F1 | Send the CW message of the contest file (a CQ call by default); only in CW |
+| Enter | Log the QSO. In CW with ESM on: send the messages of the QSO first (see "CW messages and ESM") |
+| F1 to F10 | Send a CW message; F12 clears the entry row |
 | Tab / Shift-Tab | Next / previous field |
 | Space | Jump from callsign to exchange |
-| Esc | Clear the entry line |
+| Esc | Clear the entry line, and stop a CW message that is being sent |
+| `\` | Switch to the other entry row (A/B) |
 | `<frequency>` Enter | QSY (`7030.5` = kHz, below 1000 = MHz, e.g. `144.3`) |
 | `CW` / `SSB` / `FM` / `AM` / `RTTY` Enter | Set mode |
-| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ESM on/off, Run or S&P, ATU tune, quit |
-| `\` | Switch to the other entry row (A/B) |
-| PgDn / PgUp | Highlight a station in the panel; Enter in an empty call field takes it |
-| F7 | Switch the panel between newest first and band map |
-| F9 or Ctrl-J | Store the station in the call field for later |
-| Del | Remove the highlighted stored station |
-| F6 | Spot a station on the DX cluster (asks for a comment first) |
 | Up / Down | Edit a logged QSO in the list (see below) |
-| F8 | Delete the last QSO, or the selected one while editing |
+| PgDn / PgUp | Highlight a station in the panel; Enter in an empty call field takes it |
+| Alt-B | Switch the panel between newest first and band map |
+| Alt-L or Ctrl-J | Store the station in the call field for later |
+| Del | Remove the highlighted stored station |
+| Alt-S | Spot a station on the DX cluster (asks for a comment first) |
+| Alt-D | Delete the QSO entered last, or the selected one while editing |
+| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ESM on/off, Run or S&P, ATU tune, quit |
 | Ctrl-X | Quit directly, without the menu |
+
+Alt and a letter needs a terminal that sends Alt as an Escape prefix, which
+is the usual setting on Linux.
 
 ### Menu
 
@@ -622,7 +661,7 @@ edited in place, cell by cell: time (UTC, `2026-12-01 18:45:00`), callsign,
 frequency (kHz), mode, both reports and both exchanges. Tab and Shift-Tab
 move between the cells.
 
-Enter saves, Esc cancels, F8 deletes the selected QSO. Moving to another QSO
+Enter saves, Esc cancels, Alt-D deletes the selected QSO. Moving to another QSO
 with Up or Down discards unsaved changes. Whatever is typed in the entry rows
 is left untouched while you edit. The log is kept in time order, so a QSO
 whose time was changed moves to its new place in the list and exports.

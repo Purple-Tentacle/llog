@@ -10,7 +10,7 @@ Point llog at it in ~/.config/llog/config.ini:
     port = 7300
 
 It asks for a login, answers "sh/dx" with a few stored spots, sends a new
-made-up spot every 20 seconds and accepts spots you send with F6: these are
+made-up spot every 20 seconds and accepts spots you send with Alt-S: these are
 printed here and echoed back as a normal "DX de" line, as a real node does.
 Log in as REFUSE to see how llog shows a refused spot.
 """
