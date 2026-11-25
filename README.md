@@ -217,6 +217,37 @@ assumes 20 WPM; at a slower speed the pause is then shorter than set.
 Many terminals use F11 for full screen. If the key does not reach llog,
 remove that shortcut in the terminal's settings.
 
+### Voice messages in SSB
+
+In SSB, AM and FM llog has no texts to send. It starts the voice memories
+that are recorded in the radio instead, over the same connection as
+everything else; no audio cable is needed. Two keys have a memory, the same
+on every radio:
+
+| Key | Memory of the radio | Record there |
+| --- | --- | --- |
+| F1 (Run only) | 1 | your CQ call |
+| F4 | 2 | your callsign |
+
+The other message keys have no function in these modes and are not shown.
+F11 repeats memory 1 with the pause from the menu. llog watches the radio's
+transmit state and starts the pause when the radio is back on receive, so
+the length of the recording does not matter. If the radio does not transmit
+after the command (for example because the memory is empty), llog says so
+and ends the repeat. Esc stops a running message. ESM does not send voice
+messages: Enter only logs in these modes.
+
+Recording is done on the radio:
+
+- **KX2 / KX3:** hold REC, tap 1 or 2, then XMIT to start and to stop
+  (up to 15 seconds each). llog plays them with the commands for a tap on
+  MSG and on 1 or 2 (`SWT11;SWT19;` and `SWT11;SWT27;`) and stops with `RX;`.
+- **IC-705:** VOICE > REC/SET > REC, memories T1 and T2; a microSD card is
+  needed. llog uses Hamlib's `send_voice_mem` and, if the installed Hamlib
+  refuses it, the CI-V command `28 00` directly (radio address A4, the
+  default).
+- **Other radios:** work if Hamlib supports `send_voice_mem` for them.
+
 ### ESM ("Enter sends message")
 
 With ESM on, the Enter key sends whatever comes next in the QSO, depending

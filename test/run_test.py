@@ -31,7 +31,13 @@ def fake_client(conn):
             elif line == "\\dump_caps":
                 conn.sendall(b"Caps dump for model: 2044\nModel name:\tKX2\n"
                              b"Mfg name:\tElecraft\n")
+            elif line == "t":
+                conn.sendall(b"1\n" if time.time() < state.get("tx", 0) else b"0\n")
             elif line.startswith("w "):
+                if line.startswith("w SWT11;") and state.get("recorded", True):
+                    state["tx"] = time.time() + 2      # a voice memory plays for 2 s
+                if line == "w RX;":
+                    state["tx"] = 0
                 conn.sendall(b"\n")
             elif line == "l KEYSPD":
                 conn.sendall(b"40\n")
@@ -141,9 +147,21 @@ send("\x1b")                                                 # Esc, not logged
 send("7030.5\r", 1.2)                                         # QSY via logger
 send("ssb\r", 1.2)                                            # mode via logger
 n_cw = sum(c.startswith("b ") for c in state["cmds"])
-send("\x1bOP")                                                # F1 in SSB: refused
-assert sum(c.startswith("b ") for c in state["cmds"]) == n_cw and b"not CW - nothing sent" in screen
 send("\r")                                                    # empty Enter in SSB: nothing sent
+# SSB: F1 and F4 start the radio's voice memories 1 and 2, F11 repeats memory 1
+send("\x1bOP", 0.5); assert "w SWT11;SWT19;" in state["cmds"] and b"Voice memory 1 (CQ)" in screen
+send("\x1bOP", 0.3); assert state["cmds"].count("w SWT11;SWT19;") == 1    # still running
+pump(3.0); send("\x1bOS", 0.5); assert "w SWT11;SWT27;" in state["cmds"]  # F4: my call
+send("\x1b", 1.0); assert "w RX;" in state["cmds"]                        # Esc stops it
+send("\x1bOQ", 0.5); assert b"F2 has no voice message" in screen
+pump(1.0); send("\x1b[23~", 0.5)                                          # F11, pause 1 s
+pump(7.5)                                # 2 s message + 1 s pause: 0, ~3.3, ~6.6 s
+assert state["cmds"].count("w SWT11;SWT19;") == 4, state["cmds"].count("w SWT11;SWT19;")
+send("\x1b", 1.0); pump(4.0); assert state["cmds"].count("w SWT11;SWT19;") == 4
+state["recorded"] = False; send("\x1b[23~", 0.5); pump(5.0)               # empty memory
+assert state["cmds"].count("w SWT11;SWT19;") == 5 and b"did not transmit" in screen and b"Auto CQ off" in screen
+state["recorded"] = True
+assert sum(c.startswith("b ") for c in state["cmds"]) == n_cw
 assert sum(c.startswith("b ") for c in state["cmds"]) == n_cw
 send("dk2xyz\t"); send("57\t"); send("55\t"); send("nm\t"); send("jo40\r")   # QSO 2 with RSTs and locator
 send("oops1x\r"); send("\x1bd"); send("y")                     # QSO 3, Alt-D delete
@@ -625,13 +643,41 @@ appr.key(None, F11); assert not appr.cq_auto and appr.msg == "Auto CQ off."
 appr.key(None, F11); assert appr.cq_auto and len(sent_cw) == 3
 appr.key(None, "d"); assert not appr.cq_auto and appr.val["call"] == "D"    # typing ends it
 appr.key(None, "\x7f")
-appr.key(None, F11); appr.rig.mode["A"] = "USB"                  # radio leaves CW: it ends
+appr.key(None, F11); appr.rig.mode["A"] = "RTTY"                  # radio leaves CW: it ends
 appr.cq_sent = (0, sent_cw[0]); appr.auto_cq_tick()
 assert not appr.cq_auto and "Auto CQ off" in appr.msg and len(sent_cw) == 4
 appr.rig.mode["A"] = "CW"; appr.esm_mode = "sp"; appr.key(None, F11)
 assert not appr.cq_auto and "Run only" in appr.msg and len(sent_cw) == 4
 assert not any("F11" in text for text, _ in appr.key_line()[0])
 appr.esm_mode = "run"; appr.save_setting("cw", cq_pause="3")
+# voice memories in SSB: F1 = memory 1 (Run), F4 = memory 2
+voiced = []; appr.rig.mode["A"] = "USB"
+def fake_voice(n): voiced.append(n); appr.rig.voice_busy = True
+appr.rig.send_voice = fake_voice; appr.rig.voice_busy = False
+assert [t for t, _ in appr.key_line()[0]] == [" RUN ", " F1 CQ ", " F4 MyCall ", " F11 Auto CQ 3s ", " F12 Wipe "]
+appr.fkey(1); assert voiced == [1] and "Voice memory 1 (CQ)" in appr.msg and not sent_cw[4:]
+appr.fkey(4); assert voiced == [1] and "still running" in appr.msg
+appr.rig.voice_busy = False; appr.fkey(4); assert voiced == [1, 2]
+appr.rig.voice_busy = False; appr.fkey(2); assert voiced == [1, 2] and "no voice message" in appr.msg
+appr.esm_mode = "sp"; appr.fkey(1); assert voiced == [1, 2]
+assert [t for t, _ in appr.key_line()[0]] == [" S&P ", " F4 MyCall ", " F12 Wipe "]
+appr.esm_mode = "run"; appr.key(None, F11); assert appr.cq_auto and voiced == [1, 2, 1]
+appr.auto_cq_tick(); assert len(voiced) == 3                    # still transmitting
+appr.rig.voice_busy, appr.rig.voice_ok, appr.rig.voice_end = False, True, time.time()
+appr.auto_cq_tick(); assert len(voiced) == 3                    # pause
+appr.rig.voice_end = time.time() - 3.1; appr.auto_cq_tick(); assert len(voiced) == 4
+appr.rig.voice_busy, appr.rig.voice_ok = False, False; appr.auto_cq_tick()
+assert not appr.cq_auto and "Auto CQ off" in appr.msg and len(voiced) == 4
+appr.rig.voice_ok = True; appr.rig.mode["A"] = "CW"
+# the commands: IC-705 through Hamlib, or as a CI-V command if Hamlib refuses
+ric2 = m.Rig("127.0.0.1", 1); ric2.model = "IC-705"; raws = []
+ric2._raw = lambda line, until=None: (raws.append(line), "RPRT -11")[1]
+try: ric2._voice_run(2)
+except OSError: pass                                            # no rigctld for the PTT watch
+assert raws == ["\\send_voice_mem 2", "w \\0xfe\\0xfe\\0xa4\\0xe0\\0x28\\0x00\\0x02\\0xfd"], raws
+del raws[:]; ric2._stop_voice()
+assert raws == ["\\stop_voice_mem", "w \\0xfe\\0xfe\\0xa4\\0xe0\\0x28\\0x00\\0x00\\0xfd"]
+ric2.model = "FT-891"; del raws[:]; assert ric2._voice_run(1) is False and "RPRT -11" in ric2.tune_info
 appr.rig.online = False
 assert lit() == ([], "ESM: not in CW, Enter logs")
 # periodic backup

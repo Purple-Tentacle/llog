@@ -831,6 +831,81 @@ class Rig(threading.Thread):
         threading.Thread(target=self._cw, args=(command, "CW stopped.",
                                                 "CW not stopped"), daemon=True).start()
 
+    # ---- voice memories of the radio (SSB): llog only starts and stops them
+    # KX2 / KX3: a tap on MSG, then on the switch that carries the number
+    VOICE_SWITCHES = {1: "SWT11;SWT19;", 2: "SWT11;SWT27;"}
+    voice_busy = False    # a voice memory was started and is not finished
+    voice_ok = True       # the last one was really transmitted
+    voice_end = 0         # when the radio went back to receive
+
+    def send_voice(self, number):
+        """Lets the radio transmit its voice memory 1 or 2 and watches the
+        transmit state, so that voice_end tells when it was finished."""
+        self.voice_busy, self.voice_ok = True, True
+        threading.Thread(target=self._voice, args=(number,), daemon=True).start()
+
+    def _icom_raw(self, data):
+        """A CI-V command for the IC-705 (default address A4), passed through."""
+        frame = "".join(f"\\0x{b:02x}" for b in (0xFE, 0xFE, 0xA4, 0xE0, *data, 0xFD))
+        self._raw("w " + frame)
+
+    def _voice(self, number):
+        try:
+            self.voice_ok = self._voice_run(number)
+        except OSError as exc:
+            self.voice_ok = False
+            self.tune_info = f"Voice memory not sent: {exc}"
+        self.voice_end = time.time()
+        self.voice_busy = False
+
+    def _voice_run(self, number):
+        model = (self.model or self._identify()).upper()
+        if model in ("KX2", "KX3"):
+            self._raw("w " + self.VOICE_SWITCHES[number])
+        else:
+            answer = self._raw(
+                f"\\send_voice_mem{self._vfo_arg(self.vfo)} {number}").strip()
+            if answer != "RPRT 0" and "705" in model:
+                self._icom_raw((0x28, 0x00, number))
+            elif answer != "RPRT 0":
+                self.tune_info = (f"Voice memory not sent: rigctld answered "
+                                  f"{answer or 'nothing'}")
+                return False
+        # follow the transmit state: on within 3 s, then off again
+        started, seen = time.time(), False
+        with socket.create_connection(self.addr, timeout=4) as sock:
+            while time.time() < started + 120:
+                sock.sendall(f"t{self._vfo_arg(self.vfo)}\n".encode())
+                answer = sock.recv(100).decode("ascii", "replace").strip()
+                if answer not in ("0", "1"):
+                    self.tune_info = ("Voice memory started, but the radio does "
+                                      "not tell when it transmits.")
+                    return False
+                if answer == "1":
+                    seen = True
+                elif seen:
+                    return True
+                elif time.time() > started + 3:
+                    self.tune_info = (f"Voice memory {number}: the radio did not "
+                                      "transmit. Is the memory recorded?")
+                    return False
+                time.sleep(0.25)
+        return True
+
+    def stop_voice(self):
+        threading.Thread(target=self._stop_voice, daemon=True).start()
+
+    def _stop_voice(self):
+        try:
+            model = (self.model or self._identify()).upper()
+            if model in self.ELECRAFT:
+                self._raw("w RX;")
+            elif self._raw("\\stop_voice_mem").strip() != "RPRT 0" and "705" in model:
+                self._icom_raw((0x28, 0x00, 0x00))
+            self.tune_info = "Voice message stopped."
+        except OSError as exc:
+            self.tune_info = f"Voice message not stopped: {exc}"
+
     def _cw(self, command, done, failed="CW not sent"):
         try:
             with socket.create_connection(self.addr, timeout=30) as sock:
@@ -1875,6 +1950,34 @@ class App:
     def cw_ready(self):
         return self.rig.online and (self.rig.mode.get(self.row) or "") in ("CW", "CWR")
 
+    VOICE_MODES = ("USB", "LSB", "AM", "FM")
+
+    def voice_ready(self):
+        return self.rig.online and (self.rig.mode.get(self.row) or "") in self.VOICE_MODES
+
+    def voice_memory(self, key):
+        """Voice memory of the radio behind a message key, 0 for none:
+        F1 (CQ, Run only) is memory 1, F4 (my call) is memory 2."""
+        if key == 1:
+            return 1 if self.esm_mode == "run" else 0
+        return 2 if key == 4 else 0
+
+    def send_voice(self, key):
+        memory = self.voice_memory(key)
+        label = self.fkeys[self.esm_mode][key][0] or ("CQ" if key == 1 else "MyCall")
+        if not memory:
+            self.msg = (f"F{key} has no voice message. In SSB: "
+                        + ("F1 CQ and " if self.esm_mode == "run" else "")
+                        + "F4 MyCall.")
+        elif self.rig.voice_busy:
+            self.msg = "A voice message is still running (Esc stops it)."
+        else:
+            self.rig.tune_info = ""
+            self.rig.send_voice(memory)
+            self.msg = f"Voice memory {memory} ({label}) ...  (Esc stops)"
+            return True
+        return False
+
     def keys_text(self, numbers, prefix=""):
         """Text of the given function keys in the current operating mode,
         joined to one transmission; keys without a message are left out."""
@@ -1905,7 +2008,9 @@ class App:
         label, template = self.fkeys[self.esm_mode][number]
         call = self.val["call"]
         mode = "Run" if self.esm_mode == "run" else "S&P"
-        if not template:
+        if self.voice_ready():
+            self.send_voice(number)
+        elif not template:
             self.msg = f"F{number} has no message in {mode}."
         elif "{CALL}" in template.upper() and not is_call(call):
             self.msg = f"F{number} {label} needs a callsign in the call field."
@@ -1931,14 +2036,19 @@ class App:
             self.msg = "Auto CQ off."
         elif self.esm_mode != "run":
             self.msg = "Auto CQ works in Run only (Alt-M, then S)."
-        elif not self.fkeys["run"][1][1]:
+        elif not self.voice_ready() and not self.fkeys["run"][1][1]:
             self.msg = "Auto CQ sends the F1 message, and F1 has none."
         elif self.auto_cq_send():
             self.cq_auto = True
             self.msg = (f"Auto CQ on, pause {self.cq_pause():g} s: "
-                        f"{self.cq_sent[1]}  (any key stops)")
+                        f"{self.cq_sent[1] or 'voice memory 1'}  (any key stops)")
 
     def auto_cq_send(self):
+        if self.voice_ready():                   # SSB: voice memory 1
+            if self.send_voice(1):
+                self.cq_sent = (time.time(), "")
+                return True
+            return False
         text = self.keys_text([1])
         if self.send_text(text):
             self.cq_sent = (time.time(), text)
@@ -1951,6 +2061,14 @@ class App:
             return
         started, text = self.cq_sent
         due = started + cw_seconds(text, self.rig.wpm) + self.cq_pause()
+        if not text:                 # voice: the radio tells when it is finished
+            if self.rig.voice_busy:
+                return
+            if not self.rig.voice_ok:
+                self.cq_auto = False
+                self.msg += " Auto CQ off."
+                return
+            due = self.rig.voice_end + self.cq_pause()
         if self.esm_mode != "run":
             self.cq_auto = False
         elif time.time() >= due and not self.auto_cq_send():
@@ -2097,9 +2215,14 @@ class App:
                 note = "ESM: not in CW, Enter logs"
         mode = "RUN" if self.esm_mode == "run" else "S&P"
         segments = [(f" {mode} ", False)]
+        voice = self.voice_ready()
+        if voice:
+            note = "Voice memories of the radio"
         for number in range(1, 11):
             label, template = self.fkeys[self.esm_mode][number]
-            if template:
+            if voice and self.voice_memory(number):
+                segments.append((f" F{number} {label or ('CQ' if number == 1 else 'MyCall')} ", False))
+            elif template and not voice:
                 segments.append((f" F{number} {label} ", number in keys))
         if self.esm_mode == "run":
             segments.append((f" F11 Auto CQ {self.cq_pause():g}s ", self.cq_auto))
@@ -2461,7 +2584,9 @@ class App:
             self.clear()
             self.spot = ""
             self.msg = "Cleared."
-            if time.time() < self.cw_until:      # a CW message may still be running
+            if self.rig.voice_busy:              # a voice memory is playing
+                self.rig.stop_voice()
+            elif time.time() < self.cw_until:    # a CW message may still be running
                 self.rig.stop_cw()
                 self.cw_until = 0
         elif ch in ("\t", curses.KEY_BTAB) or (ch == " " and name != "exch"):
