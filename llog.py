@@ -827,16 +827,17 @@ class Rig(threading.Thread):
         """Ends a CW message that is being sent. Elecraft radios get their
         own 'back to receive' command, which also empties the text buffer;
         other radios Hamlib's stop_morse."""
-        command = "w RX;TQ;" if self.model.upper() in self.ELECRAFT else "\\stop_morse"
+        command = (f"T{self._vfo_arg(self.vfo)} 0" if self.model.upper() in self.ELECRAFT
+                   else "\\stop_morse")
         threading.Thread(target=self._cw, args=(command, "CW stopped.",
                                                 "CW not stopped"), daemon=True).start()
 
     # ---- voice memories of the radio (SSB): llog only starts and stops them
     # KX2 / KX3: a tap on MSG, then on the switch that carries the number
-    # The TQ; at the end (a query the radio answers) keeps rigctld from
-    # waiting for a reply that a switch tap or RX; never gives: while it
-    # waits, it serves no other command.
-    VOICE_SWITCHES = {1: "SWT11;SWT19;TQ;", 2: "SWT11;SWT27;TQ;"}
+    # rigctld waits a few seconds for a reply to such a raw command, which
+    # the radio never gives, and serves no other command meanwhile. So raw
+    # commands are only used where Hamlib has no command of its own.
+    VOICE_SWITCHES = {1: "SWT11;SWT19;", 2: "SWT11;SWT27;"}
     _voice_id = 0         # counts the started messages; a stop makes it move on
     voice_busy = False    # a voice memory was started and is not finished
     voice_ok = True       # the last one was really transmitted
@@ -942,7 +943,8 @@ class Rig(threading.Thread):
         try:
             model = (self.model or self._identify()).upper()
             if model in self.ELECRAFT:
-                self._raw("w RX;TQ;")
+                # Hamlib's "PTT off" sends RX; and returns at once
+                self._raw(f"T{self._vfo_arg(self.vfo)} 0")
             elif self._raw("\\stop_voice_mem").strip() != "RPRT 0" and "705" in model:
                 self._icom_raw((0x28, 0x00, 0x00))
             self.tune_info = "Voice message stopped."
@@ -1043,7 +1045,8 @@ class Rig(threading.Thread):
         while True:
             try:
                 if self._sock is None:
-                    self._sock = socket.create_connection(self.addr, timeout=2)
+                    # generous: rigctld is busy for seconds after a raw command
+                    self._sock = socket.create_connection(self.addr, timeout=8)
                     self._file = self._sock.makefile("r")
                     self.model = ""
                     threading.Thread(target=self._identify, daemon=True).start()

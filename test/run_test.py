@@ -41,9 +41,11 @@ def fake_client(conn):
             elif line.startswith("w "):
                 if line.startswith("w SWT11;") and state.get("recorded", True):
                     state["tx"] = time.time() + 2      # a voice memory plays for 2 s
-                if line == "w RX;TQ;" and not state.get("slow"):
-                    state["tx"] = 0
                 conn.sendall(b"\n")
+            elif line == "T 0":
+                if not state.get("slow"):
+                    state["tx"] = 0
+                conn.sendall(b"RPRT 0\n")
             elif line == "l KEYSPD":
                 conn.sendall(b"40\n")
             elif line.startswith("b ") or line == "\\stop_morse":
@@ -153,24 +155,24 @@ send("7030.5\r", 1.2)                                         # QSY via logger
 send("ssb\r", 1.2)                                            # mode via logger
 n_cw = sum(c.startswith("b ") for c in state["cmds"])
 send("\r", 0.5)                                               # empty Enter in SSB, ESM: CQ memory
-assert state["cmds"].count("w SWT11;SWT19;TQ;") == 1 and b"Voice memory 1 (CQ)" in screen
-send("\x1b", 1.0); n_rx = state["cmds"].count("w RX;TQ;"); assert n_rx
-state["cmds"][:] = [c for c in state["cmds"] if c not in ("w SWT11;SWT19;TQ;", "w RX;TQ;")]
+assert state["cmds"].count("w SWT11;SWT19;") == 1 and b"Voice memory 1 (CQ)" in screen
+send("\x1b", 1.0); n_rx = state["cmds"].count("T 0"); assert n_rx
+state["cmds"][:] = [c for c in state["cmds"] if c not in ("w SWT11;SWT19;", "T 0")]
 # SSB: F1 and F4 start the radio's voice memories 1 and 2, F11 repeats memory 1
-send("\x1bOP", 0.5); assert "w SWT11;SWT19;TQ;" in state["cmds"] and b"Voice memory 1 (CQ)" in screen
-send("\x1bOP", 0.3); assert state["cmds"].count("w SWT11;SWT19;TQ;") == 1    # still running
-pump(3.0); send("\x1bOS", 0.5); assert "w SWT11;SWT27;TQ;" in state["cmds"]  # F4: my call
+send("\x1bOP", 0.5); assert "w SWT11;SWT19;" in state["cmds"] and b"Voice memory 1 (CQ)" in screen
+send("\x1bOP", 0.3); assert state["cmds"].count("w SWT11;SWT19;") == 1    # still running
+pump(3.0); send("\x1bOS", 0.5); assert "w SWT11;SWT27;" in state["cmds"]  # F4: my call
 state["slow"] = True                     # a radio that keeps reporting transmit after the stop
-send("\x1b", 0.4); assert "w RX;TQ;" in state["cmds"]                     # Esc stops it
-send("\x1bOS", 0.5); assert state["cmds"].count("w SWT11;SWT27;TQ;") == 2 # and F4 works at once
+send("\x1b", 0.4); assert "T 0" in state["cmds"]                     # Esc stops it
+send("\x1bOS", 0.5); assert state["cmds"].count("w SWT11;SWT27;") == 2 # and F4 works at once
 state["slow"] = False; send("\x1b", 1.0)
 send("\x1bOQ", 0.5); assert b"F2 has no voice message" in screen
 pump(1.0); send("\x1b[23~", 0.5)                                          # F11, pause 1 s
 pump(7.5)                                # 2 s message + 1 s pause: 0, ~3.3, ~6.6 s
-assert state["cmds"].count("w SWT11;SWT19;TQ;") == 4, state["cmds"].count("w SWT11;SWT19;TQ;")
-send("\x1b", 1.0); pump(4.0); assert state["cmds"].count("w SWT11;SWT19;TQ;") == 4
+assert state["cmds"].count("w SWT11;SWT19;") == 4, state["cmds"].count("w SWT11;SWT19;")
+send("\x1b", 1.0); pump(4.0); assert state["cmds"].count("w SWT11;SWT19;") == 4
 state["recorded"] = False; send("\x1b[23~", 0.5); pump(5.0)               # empty memory
-assert state["cmds"].count("w SWT11;SWT19;TQ;") == 5 and b"did not transmit" in screen and b"Auto CQ off" in screen
+assert state["cmds"].count("w SWT11;SWT19;") == 5 and b"did not transmit" in screen and b"Auto CQ off" in screen
 state["recorded"] = True
 assert sum(c.startswith("b ") for c in state["cmds"]) == n_cw
 assert sum(c.startswith("b ") for c in state["cmds"]) == n_cw
@@ -525,7 +527,7 @@ assert apps.partial.match("K1ABC")[0] == "K1ABC" and apps.partial.match("dk1ab")
 apps.manual_freq["A"] = 144300000; apps.val["call"] = "DL1ABQ"; apps.enter()   # from this log too
 apps.val["call"] = "L1AB"; assert apps.partial_matches() == ["DL1ABC", "DL1ABD", "DL1ABQ", "EA8/DL1ABX"]
 # CW message placeholders
-assert "w RX;TQ;" in state["cmds"]                    # the fake radio reports itself as KX2
+assert "T 0" in state["cmds"]                    # the fake radio reports itself as KX2
 ccw = m.load_config(work, os.path.join(EX, "darc-cwa.ini")); ccw["contest"]["exchange_sent"] = "# N13"
 appc = m.App(ccw, m.Log(os.path.join(work, "cw.db"))); appc.val["call"] = "dl1abc"
 assert appc.keys_text([1]) == "CQ TEST DA2IT DA2IT K" and appc.keys_text([5, 2]) == "DL1ABC 5NN 001 N13"

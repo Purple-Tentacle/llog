@@ -246,9 +246,8 @@ Recording is done on the radio:
 
 - **KX2 / KX3:** hold REC, tap 1 or 2, then XMIT to start and to stop
   (up to 15 seconds each). llog plays them with the commands for a tap on
-  MSG and on 1 or 2 (`SWT11;SWT19;` and `SWT11;SWT27;`) and stops with `RX;`. Each command is
-  followed by the query `TQ;`, so that rigctld gets an answer and does not
-  block while waiting for one.
+  MSG and on 1 or 2 (`SWT11;SWT19;` and `SWT11;SWT27;`) and stops with Hamlib's "PTT off",
+  which sends `RX;`.
 - **IC-705:** VOICE > REC/SET > REC, memories T1 and T2; a microSD card is
   needed. llog uses Hamlib's `send_voice_mem` and, if the installed Hamlib
   refuses it, the CI-V command `28 00` directly (radio address A4, the
