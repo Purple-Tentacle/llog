@@ -1962,6 +1962,21 @@ class App:
             return 1 if self.esm_mode == "run" else 0
         return 2 if key == 4 else 0
 
+    def voice_next(self):
+        """ESM in SSB: the message key Enter sends now (0 = none, Enter does
+        what it does without ESM). Run: CQ on an empty call field. S&P: my
+        call while a required field of the QSO is still empty."""
+        call = self.val["call"]
+        if not (self.enter_sends() and self.voice_ready()) or self.edit:
+            return 0
+        if not call:
+            return 0 if (self.focus == 0 and self.spot) else self.voice_memory(1) and 1
+        if (self.esm_mode == "sp" and is_call(call) and self.freq()
+                and not (self.val["loc"] and not is_locator(self.val["loc"]))
+                and any(not self.val[f].strip() for f in self.esm_required)):
+            return 4
+        return 0
+
     def send_voice(self, key):
         memory = self.voice_memory(key)
         label = self.fkeys[self.esm_mode][key][0] or ("CQ" if key == 1 else "MyCall")
@@ -2086,6 +2101,11 @@ class App:
         esm = self.enter_sends() and self.cw_ready()
         if self.focus == 0 and not call and self.spot and self.spot_take():
             pass
+        elif self.voice_next():
+            # ESM in SSB: the radio's voice memory; in S&P on to the exchange
+            if self.send_voice(self.voice_next()) and call:
+                missing = [f for f in self.esm_required if not self.val[f].strip()]
+                self.focus = FIELDS.index(missing[0])
         elif not call and esm:
             # ESM, empty call field: CQ when running, own call in S&P
             keys, prefix, _, _ = self.esm_next()
@@ -2217,11 +2237,15 @@ class App:
         segments = [(f" {mode} ", False)]
         voice = self.voice_ready()
         if voice:
-            note = "Voice memories of the radio"
+            keys = [self.voice_next()]
+            note = "Voice memories of the radio" + (
+                f", Enter: F{keys[0]}" if keys[0] else
+                ", Enter logs" if self.enter_sends() else "")
         for number in range(1, 11):
             label, template = self.fkeys[self.esm_mode][number]
             if voice and self.voice_memory(number):
-                segments.append((f" F{number} {label or ('CQ' if number == 1 else 'MyCall')} ", False))
+                segments.append((f" F{number} {label or ('CQ' if number == 1 else 'MyCall')} ",
+                                 number in keys))
             elif template and not voice:
                 segments.append((f" F{number} {label} ", number in keys))
         if self.esm_mode == "run":

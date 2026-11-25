@@ -234,8 +234,13 @@ F11 repeats memory 1 with the pause from the menu. llog watches the radio's
 transmit state and starts the pause when the radio is back on receive, so
 the length of the recording does not matter. If the radio does not transmit
 after the command (for example because the memory is empty), llog says so
-and ends the repeat. Esc stops a running message. ESM does not send voice
-messages: Enter only logs in these modes.
+and ends the repeat. Esc stops a running message.
+
+ESM uses the two memories as far as they go. When running, Enter in an empty
+call field sends the CQ (F1); with a callsign it logs. In search and pounce,
+Enter with a callsign sends your call (F4) and moves to the exchange, as
+long as a field the contest requires is still empty; then it logs. The key
+Enter would send is highlighted. With ESM off, Enter only logs.
 
 Recording is done on the radio:
 

@@ -147,7 +147,10 @@ send("\x1b")                                                 # Esc, not logged
 send("7030.5\r", 1.2)                                         # QSY via logger
 send("ssb\r", 1.2)                                            # mode via logger
 n_cw = sum(c.startswith("b ") for c in state["cmds"])
-send("\r")                                                    # empty Enter in SSB: nothing sent
+send("\r", 0.5)                                               # empty Enter in SSB, ESM: CQ memory
+assert state["cmds"].count("w SWT11;SWT19;") == 1 and b"Voice memory 1 (CQ)" in screen
+send("\x1b", 1.0); n_rx = state["cmds"].count("w RX;"); assert n_rx
+state["cmds"][:] = [c for c in state["cmds"] if c not in ("w SWT11;SWT19;", "w RX;")]
 # SSB: F1 and F4 start the radio's voice memories 1 and 2, F11 repeats memory 1
 send("\x1bOP", 0.5); assert "w SWT11;SWT19;" in state["cmds"] and b"Voice memory 1 (CQ)" in screen
 send("\x1bOP", 0.3); assert state["cmds"].count("w SWT11;SWT19;") == 1    # still running
@@ -668,7 +671,23 @@ appr.auto_cq_tick(); assert len(voiced) == 3                    # pause
 appr.rig.voice_end = time.time() - 3.1; appr.auto_cq_tick(); assert len(voiced) == 4
 appr.rig.voice_busy, appr.rig.voice_ok = False, False; appr.auto_cq_tick()
 assert not appr.cq_auto and "Auto CQ off" in appr.msg and len(voiced) == 4
-appr.rig.voice_ok = True; appr.rig.mode["A"] = "CW"
+# ESM in SSB: Run sends CQ on an empty row, S&P my call until the exchange is there
+appr.rig.voice_ok = True; n_log = appr.log.count(); del voiced[:]
+if not appr.enter_sends(): appr.menus = [appr.main_menu()]; appr.menu_key("e")
+assert lit() == (["F1"], "Voice memories of the radio, Enter: F1")
+appr.enter(); assert voiced == [1]; appr.rig.voice_busy = False
+appr.val["call"] = "DL7VOX"; assert lit()[0] == [] and lit()[1].endswith("Enter logs")
+appr.enter(); assert voiced == [1] and appr.log.count() == n_log + 1       # Run with a call: logs
+appr.esm_mode = "sp"; assert lit() == ([], "Voice memories of the radio, Enter logs")
+appr.enter(); assert voiced == [1] and appr.msg == "Not a valid callsign."  # S&P, empty: nothing
+appr.val["call"] = "DL8VOX"; assert lit()[0] == ["F4"]
+appr.enter(); assert voiced == [1, 2] and appr.focus == EXCH and appr.log.count() == n_log + 1
+appr.rig.voice_busy = False; appr.val["exch"] = "N01"; assert lit()[0] == []
+appr.enter(); assert voiced == [1, 2] and appr.log.count() == n_log + 2
+appr.val["call"] = "DL9VOX"; appr.menus = [appr.main_menu()]; appr.menu_key("e")   # ESM off
+assert lit() == ([], "Voice memories of the radio"); appr.enter()
+assert voiced == [1, 2] and appr.log.count() == n_log + 3
+appr.menus = [appr.main_menu()]; appr.menu_key("e"); appr.esm_mode = "run"; appr.rig.mode["A"] = "CW"
 # the commands: IC-705 through Hamlib, or as a CI-V command if Hamlib refuses
 ric2 = m.Rig("127.0.0.1", 1); ric2.model = "IC-705"; raws = []
 ric2._raw = lambda line, until=None: (raws.append(line), "RPRT -11")[1]
