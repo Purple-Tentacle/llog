@@ -161,7 +161,8 @@ state["cmds"][:] = [c for c in state["cmds"] if c not in ("w SWT11;SWT19;", "T 0
 # SSB: F1 and F4 start the radio's voice memories 1 and 2, F11 repeats memory 1
 send("\x1bOP", 0.5); assert "w SWT11;SWT19;" in state["cmds"] and b"Voice memory 1 (CQ)" in screen
 send("\x1bOP", 0.3); assert state["cmds"].count("w SWT11;SWT19;") == 1    # still running
-pump(3.0); send("\x1bOS", 0.5); assert "w SWT11;SWT27;" in state["cmds"]  # F4: my call
+pump(3.0); assert b"Voice memory 1 sent." in screen                       # the message line follows
+send("\x1bOS", 0.5); assert "w SWT11;SWT27;" in state["cmds"]             # F4: my call
 state["slow"] = True                     # a radio that keeps reporting transmit after the stop
 send("\x1b", 0.4); assert "T 0" in state["cmds"]                     # Esc stops it
 send("\x1bOS", 0.5); assert state["cmds"].count("w SWT11;SWT27;") == 2 # and F4 works at once
@@ -677,7 +678,7 @@ assert [t for t, _ in appr.key_line()[0]] == [" S&P ", " F4 MyCall ", " F12 Wipe
 appr.esm_mode = "run"; appr.key(None, F11); assert appr.cq_auto and voiced == [1, 2, 1]
 appr.auto_cq_tick(); assert len(voiced) == 3                    # still transmitting
 appr.rig.voice_busy, appr.rig.voice_ok, appr.rig.voice_end = False, True, time.time()
-appr.auto_cq_tick(); assert len(voiced) == 3                    # pause
+appr.msg = "x"; appr.auto_cq_tick(); assert len(voiced) == 3 and appr.msg.startswith("Auto CQ: voice memory 1 sent, pause 3 s")
 appr.rig.voice_end = time.time() - 3.1; appr.auto_cq_tick(); assert len(voiced) == 4
 appr.rig.voice_busy, appr.rig.voice_ok = False, False; appr.auto_cq_tick()
 assert not appr.cq_auto and "Auto CQ off" in appr.msg and len(voiced) == 4

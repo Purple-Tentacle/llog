@@ -863,7 +863,8 @@ class Rig(threading.Thread):
             ok, problem = False, f"Voice memory not started: {exc}"
         if ident == self._voice_id:      # not stopped or replaced meanwhile
             self.voice_ok = ok
-            self.tune_info = problem or self.tune_info
+            self.tune_info = problem or self.tune_info or (
+                f"Voice memory {number} sent." if ok else "")
             self.voice_end = time.time()
             self.voice_busy = False
 
@@ -2130,6 +2131,9 @@ class App:
                 self.msg += " Auto CQ off."
                 return
             due = self.rig.voice_end + self.cq_pause()
+            if time.time() < due and "Auto CQ" not in self.msg:
+                self.msg = (f"Auto CQ: voice memory 1 sent, pause "
+                            f"{self.cq_pause():g} s  (any key stops)")
         if self.esm_mode != "run":
             self.cq_auto = False
         elif time.time() >= due and not self.auto_cq_send():
