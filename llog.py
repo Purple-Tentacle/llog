@@ -2131,11 +2131,12 @@ class App:
                 self.msg += " Auto CQ off."
                 return
             due = self.rig.voice_end + self.cq_pause()
-            if time.time() < due and "Auto CQ" not in self.msg:
-                self.msg = (f"Auto CQ: voice memory 1 sent, pause "
-                            f"{self.cq_pause():g} s  (any key stops)")
+        left = due - time.time()
         if self.esm_mode != "run":
             self.cq_auto = False
+        elif 0 < left <= self.cq_pause():        # in the pause: count down
+            self.msg = (f"Auto CQ: next CQ in {math.ceil(left)} s  "
+                        "(any key stops)")
         elif time.time() >= due and not self.auto_cq_send():
             self.cq_auto = False
             self.msg += " Auto CQ off."

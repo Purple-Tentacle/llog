@@ -652,6 +652,7 @@ assert (" F11 Auto CQ 0.5s ", True) in appr.key_line()[0] and "pause 0.5 s" in a
 appr.auto_cq_tick(); assert len(sent_cw) == 1                    # still sending
 long = m.cw_seconds(sent_cw[0], 30)
 appr.cq_sent = (time.time() - long - 0.4, sent_cw[0]); appr.auto_cq_tick(); assert len(sent_cw) == 1   # pause
+assert appr.msg == "Auto CQ: next CQ in 1 s  (any key stops)"
 appr.cq_sent = (time.time() - long - 0.6, sent_cw[0]); appr.auto_cq_tick(); assert len(sent_cw) == 2   # next CQ
 appr.key(None, F11); assert not appr.cq_auto and appr.msg == "Auto CQ off."
 appr.key(None, F11); assert appr.cq_auto and len(sent_cw) == 3
@@ -678,7 +679,8 @@ assert [t for t, _ in appr.key_line()[0]] == [" S&P ", " F4 MyCall ", " F12 Wipe
 appr.esm_mode = "run"; appr.key(None, F11); assert appr.cq_auto and voiced == [1, 2, 1]
 appr.auto_cq_tick(); assert len(voiced) == 3                    # still transmitting
 appr.rig.voice_busy, appr.rig.voice_ok, appr.rig.voice_end = False, True, time.time()
-appr.msg = "x"; appr.auto_cq_tick(); assert len(voiced) == 3 and appr.msg.startswith("Auto CQ: voice memory 1 sent, pause 3 s")
+appr.auto_cq_tick(); assert len(voiced) == 3 and appr.msg == "Auto CQ: next CQ in 3 s  (any key stops)"
+appr.rig.voice_end = time.time() - 1.5; appr.auto_cq_tick(); assert appr.msg.startswith("Auto CQ: next CQ in 2 s")
 appr.rig.voice_end = time.time() - 3.1; appr.auto_cq_tick(); assert len(voiced) == 4
 appr.rig.voice_busy, appr.rig.voice_ok = False, False; appr.auto_cq_tick()
 assert not appr.cq_auto and "Auto CQ off" in appr.msg and len(voiced) == 4
