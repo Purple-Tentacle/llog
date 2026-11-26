@@ -2797,16 +2797,19 @@ class App:
                 if band and band_of(q["freq_hz"] or 0) == band:
                     entries[q["call"]] = {
                         "call": q["call"], "freq_hz": q["freq_hz"],
-                        "time": q["ts"][11:13] + q["ts"][14:16],
-                        "comment": "worked", "kind": "worked", "seen": 0}
+                        "comment": "worked", "kind": "worked", "seen": 0,
+                        "at": datetime.strptime(q["ts"], "%Y-%m-%d %H:%M:%S")
+                        .replace(tzinfo=timezone.utc).timestamp()}
         for spot in self.cluster.spots(band):
             entries[spot["call"]] = dict(spot, kind="spot")
         for st in self.log.later_rows(band):
-            stamp = datetime.fromtimestamp(st["seen"], timezone.utc)
-            entries[st["call"]] = dict(st, kind="stored", comment="stored",
-                                       time=stamp.strftime("%H%M"))
+            entries[st["call"]] = dict(st, kind="stored", comment="stored")
         rows = list(entries.values())
+        now = time.time()
         for row in rows:
+            # age in minutes: of the spot, the stored entry or the QSO
+            age = max(int((now - row.get("at", row["seen"])) // 60), 0)
+            row["time"] = f"{age}m" if age < 1000 else ">999"
             row["worked"] = row["kind"] == "worked" or bool(self.log.find_dupe(
                 self.rules, row["call"], row["freq_hz"], self.mode()))
         if self.view == "map":
@@ -2829,7 +2832,7 @@ class App:
             flag = ">" if row.get("here") else "*" if row["kind"] == "stored" \
                 else " "
             row["text"] = (f"{flag}{row['freq_hz'] / 1000:>{width}.1f} "
-                           f"{row['call']:<12} {row['time']:<4} "
+                           f"{row['call']:<12} {row['time']:>4} "
                            f"{row['comment']}").rstrip()
         return rows
 

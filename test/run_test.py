@@ -272,7 +272,10 @@ rig.select("B"); time.sleep(1); assert "V VFOB" in vstate["cmds"]
 app3 = m.App(m.load_config(work, "wsa"), m.Log(os.path.join(work, "c.db")))
 app3.manual_freq["A"] = 14060000
 app3.cluster.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
-assert app3.panel_rows()[0]["text"] == " 14025.0 K1ABC        2153 CQ TEST"
+assert app3.panel_rows()[0]["text"] == " 14025.0 K1ABC          0m CQ TEST"   # age, not the time
+app3.cluster._spots[("K1ABC", "20m")]["seen"] -= 754
+assert app3.panel_rows()[0]["text"] == " 14025.0 K1ABC         12m CQ TEST"
+app3.cluster._spots[("K1ABC", "20m")]["seen"] += 754
 # band map: spots, stored and worked stations by frequency, with our position
 app3.cluster.feed("DX de DL1AAA:     14010.0  W1AW         cq                             2154Z")
 app3.cluster.feed("DX de DL1AAA:      7010.0  DK9ZZ        other band                     2154Z")
@@ -827,7 +830,7 @@ import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
 assert b"Mults" in txt and b"NOTO" in txt and b"O55" in txt
 assert b"Detect radio and save settings" in txt and b"not set up yet" in txt
-assert b"Newest" in txt and b"K1ABC" in txt and b"2153 CQ TEST" in txt
+assert b"Newest" in txt and b"K1ABC" in txt and b"0m CQ TEST" in txt
 assert b"Band map 40m" in txt and b"stored" in txt and state["cluster_login"].startswith(b"DA2IT-1\r\n")
 cl = m.Cluster("", 0, "DA2IT")
 cl.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")

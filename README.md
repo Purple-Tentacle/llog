@@ -366,7 +366,7 @@ line, shows what is on the band of the current entry row. It follows the band wh
 between two views:
 
 - **Newest first:** cluster spots and stations you stored for later, newest
-  on top: frequency, callsign, time (UTC) and the spotter's comment, as far
+  on top: frequency, callsign, age in minutes (`12m`) and the spotter's comment, as far
   as the width allows (a full comment needs a terminal about 170 columns
   wide).
 - **Band map:** the same entries sorted by frequency, plus every station in
@@ -374,6 +374,10 @@ between two views:
   the current row is tuned: in front of the stations on that frequency
   (within 200 Hz), or on a line of its own between its neighbours when no
   station is there.
+
+The age is how long ago the spot arrived, the station was stored, or, for a
+station from your log, the QSO was made; anything older than 999 minutes
+shows `>999`.
 
 Stations you have already worked on that band (by the contest's dupe rules)
 are shown dimmed; stored stations are marked with `*`.
