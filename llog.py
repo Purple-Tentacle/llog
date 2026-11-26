@@ -2282,8 +2282,11 @@ class App:
                                  if self.fkeys[self.esm_mode][n][1])
                 note = "Enter: " + (" + ".join(
                     x for x in (names, "log" if logs else "", note) if x) or "-")
+            elif not self.rig.online:
+                note = "Rig offline: no messages, Enter logs"
             else:
-                note = "ESM: not in CW, Enter logs"
+                raw = self.rig.mode.get(self.row) or "this mode"
+                note = f"No messages in {raw}, Enter logs"
         mode = "RUN" if self.esm_mode == "run" else "S&P"
         segments = [(f" {mode} ", False)]
         voice = self.voice_ready()
