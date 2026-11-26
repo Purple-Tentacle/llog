@@ -437,22 +437,110 @@ sends a made-up spot every 20 seconds, answers the startup `sh/dx`, and
 echoes the spots you send with Alt-S. With `call = REFUSE` it refuses your
 spots, so you can see how llog shows that.
 
-## Configuration
+## Files and settings
 
-Station data and contest data live in separate files under `~/.config/llog/`:
+llog keeps its settings in one folder and writes each contest log into the
+folder you start it from.
 
-| File | Content |
+### Overview
+
+| File | Where | Created by | What it is for |
+| --- | --- | --- | --- |
+| `config.ini` | `~/.config/llog/` | llog, on the very first start | Settings for llog itself: your station, QRZ login, radio, DX cluster, backup, CW options |
+| `<name>.ini` | `~/.config/llog/contests/` | llog, the first time you start a contest with that name | Settings for one contest: rules, exchange, messages |
+| `<name>.db` | the folder you start llog in | llog, at the first start of the contest | The contest log (SQLite) |
+| `backups/<name>-<date>-<time>.db` | next to the log file | llog, every few minutes and on quit | Copies of the log |
+| `<name>.adi` | next to the log file | menu, "Export ADIF" | ADIF export |
+| `<CALL>-<date>-1.cbr` | next to the log file | menu, "Export Cabrillo" | Cabrillo export |
+| `cty.dat` | `~/.config/llog/` | you (download) | Country file, for country scoring and the country shown for a callsign |
+| `MASTER.SCP` | `~/.config/llog/` | you (download) | Callsign list for check partial |
+| an ADIF file of earlier QSOs | anywhere, named in a setting | you | "Worked before" information |
+| `rigctld.log` | `~/.config/llog/` | llog, when it starts `rigctld` | Output of `rigctld`, for troubleshooting |
+
+### Settings for llog: `config.ini`
+
+Everything that stays the same from contest to contest is in
+`~/.config/llog/config.ini`. llog asks a few questions on the very first
+start and writes the file; after that you edit it with a text editor. A few
+settings are also written by the menu (radio detection, start `rigctld` with
+llog, ESM on or off, auto CQ pause).
+
+| Section | Settings |
 | --- | --- |
-| `config.ini` | Callsign, e-mail, QRZ login, rigctld host and port, `vfo_switch`, `tune_command`, DX cluster node, backup settings |
-| `contests/<name>.ini` | Contest name, exchange you send, operator category, `SPECIFIC` header, your locator, dupe rules, scoring |
-
-Both are created by a few questions the first time they are needed: the
-station file on the very first start, a contest file the first time you start
-llog with a new contest name. Copy or edit the `.ini` files to change them.
-An `email` entry in a contest file overrides the station e-mail.
+| `[station]` | `call`, `email`; optional paths `country_file`, `scp_file`, `worked_before` |
+| `[qrz]` | `username`, `password` for the callsign lookup |
+| `[rig]` | `host` and `port` of `rigctld`, `vfo_switch`, `tune_command`, and the `rigctld_*` settings the radio menu writes |
+| `[cluster]` | `host`, `port`, `call`, `minutes` |
+| `[backup]` | `minutes`, `keep`, `folder` |
+| `[cw]` | `enter_sends` (ESM on or off), `cq_pause` (seconds between repeated CQs) |
 
 The QRZ password is stored in `config.ini` in plain text (file mode 600); the
 environment variables `QRZ_USERNAME` and `QRZ_PASSWORD` override the file.
+
+### Settings for a contest: `contests/<name>.ini`
+
+Everything that belongs to one contest is in
+`~/.config/llog/contests/<name>.ini`, in a single `[contest]` section. The
+name is the one you start llog with: `python3 llog.py wna` uses `contests/wna.ini`.
+
+There are two ways to get such a file:
+
+- **Let llog ask.** Start llog with a new name. It asks for the contest
+  name, your exchange, the category, the `SPECIFIC` header, your locator,
+  the dupe rule, points and multipliers, and writes the file.
+- **Copy an example.** The `examples` folder has ready-made files (`wna.ini`,
+  `wsa.ini`, `ok-dx-rtty.ini`, `darc-cwa.ini`). Copy one to
+  `~/.config/llog/contests/` and fill in your exchange and locator.
+
+The file holds the contest name for the log header, the exchange you send
+(with `#` for a running number), `call` if you use a different callsign in
+this contest, `locator`, `mode`, the categories, the dupe rules, the scoring
+(`points`, `multipliers` and the `mult_*` options), the message keys
+(`run_f1` to `run_f10`, `sp_f1` to `sp_f10`), the ESM options and
+`worked_before`. The sections "Dupe checking", "Scoring", "CW messages and
+ESM" and "Exchange and running number" describe them.
+
+Two settings can be given in both files; the contest file wins: `email`, and
+`worked_before`.
+
+A contest file can also live elsewhere: give llog the path instead of a name,
+for example `python3 llog.py ~/contests/wna-2026.ini`.
+
+### The contest log
+
+The log of a contest is one SQLite file. llog creates it in **the folder you
+are in when you start llog**, named after the contest: `python3 llog.py wna`
+creates or opens `wna.db` there. Starting the same contest again from the
+same folder continues that log; starting it from another folder begins a new,
+empty one.
+
+To choose the file yourself, name it as the second argument:
+
+```
+python3 llog.py wna ~/logs/wna-2026-12.db
+```
+
+This is also how you keep several runs of the same contest apart, since the
+contest file stays the same and only the log file changes. The exports and
+the `backups` folder are always written next to the log file in use (the
+backup folder can be changed with `folder` in `[backup]`).
+
+### Files you provide
+
+- **`cty.dat`** (country file from www.country-files.com): put it in
+  `~/.config/llog/`, or next to `llog.py`, or name another place with
+  `country_file` in `[station]`. Needed for contests that score by country or
+  continent; it also provides the country shown for a callsign.
+- **`MASTER.SCP`** (from www.supercheckpartial.com): the same places, or
+  `scp_file` in `[station]`. Without it check partial only knows
+  the callsigns in your log and in the worked-before file.
+- **Worked-before ADIF**: any ADIF file, named with `worked_before` in the
+  contest file or in `[station]`.
+
+### Another settings folder
+
+`--config-dir <folder>` makes llog use that folder instead of
+`~/.config/llog/` for `config.ini`, `contests/`, `cty.dat` and `MASTER.SCP`.
 
 ## Backup
 
