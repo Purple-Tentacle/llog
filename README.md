@@ -196,7 +196,9 @@ Switch between the two sets in the menu: Alt-M, then S ("Operating"). The
 header shows `RUN` or `S&P`.
 
 The second line from the bottom of the screen shows the message keys of the
-current set with their labels. Keys without a message are left out.
+current set with their labels. Keys without a message are left out. While
+the radio is offline or in a mode without messages (RTTY, for example), the
+message keys are hidden and the line says why.
 
 ### Repeated CQ (F11)
 

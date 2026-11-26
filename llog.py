@@ -2289,7 +2289,10 @@ class App:
                 note = f"No messages in {raw}, Enter logs"
         mode = "RUN" if self.esm_mode == "run" else "S&P"
         segments = [(f" {mode} ", False)]
-        voice = self.voice_ready()
+        voice, cw = self.voice_ready(), self.cw_ready()
+        if not (voice or cw) and not note:       # ESM off: still say why
+            note = ("Rig offline: no messages" if not self.rig.online else
+                    f"No messages in {self.rig.mode.get(self.row) or 'this mode'}")
         if voice:
             keys = [self.voice_next()]
             note = "Voice memories of the radio" + (
@@ -2300,9 +2303,9 @@ class App:
             if voice and self.voice_memory(number):
                 segments.append((f" F{number} {label or ('CQ' if number == 1 else 'MyCall')} ",
                                  number in keys))
-            elif template and not voice:
+            elif template and cw:
                 segments.append((f" F{number} {label} ", number in keys))
-        if self.esm_mode == "run":
+        if self.esm_mode == "run" and (cw or voice):
             segments.append((f" F11 Auto CQ {self.cq_pause():g}s ", self.cq_auto))
         segments.append((" F12 Wipe ", False))
         return segments, note

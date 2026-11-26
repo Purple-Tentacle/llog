@@ -712,7 +712,9 @@ assert raws == ["\\stop_voice_mem", "w \\0xfe\\0xfe\\0xa4\\0xe0\\0x28\\0x00\\0x0
 ric2.model = "FT-891"; del raws[:]; assert ric2._voice_run(1) is False and "RPRT -11" in ric2.tune_info
 appr.rig.online = False
 assert lit() == ([], "Rig offline: no messages, Enter logs")
+assert [t for t, _ in appr.key_line()[0]] == [" RUN ", " F12 Wipe "]          # no keys without a radio
 appr.rig.online, appr.rig.mode["A"] = True, "RTTY"; assert lit() == ([], "No messages in RTTY, Enter logs")
+assert [t for t, _ in appr.key_line()[0]] == [" RUN ", " F12 Wipe "]
 appr.rig.online, appr.rig.mode["A"] = False, "CW"
 # periodic backup
 bdir = os.path.join(work, "bk"); c9 = m.load_config(work, "wsa"); c9["backup"]["folder"] = bdir
