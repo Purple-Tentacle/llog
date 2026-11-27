@@ -308,7 +308,10 @@ def wpx_prefix(call):
 
 
 def show_mult(value):
-    """Multiplier value for display (prefixes are stored as 'pfx:DL1')."""
+    """Multiplier value for display (prefixes are stored as 'pfx:DL1', CQ
+    zones as 'zone:14' and shown as Z14)."""
+    if value.startswith("zone:"):
+        return "Z" + value[5:]
     return value.split(":", 1)[-1]
 
 
@@ -341,6 +344,10 @@ def score_rules(cfg):
         mult_prefix = con.getboolean("mult_prefix", False)
     except ValueError:
         sys.exit("mult_prefix must be yes or no")
+    try:
+        mult_zone = con.getboolean("mult_zone", False)
+    except ValueError:
+        sys.exit("mult_zone must be yes or no")
     exclude = con.get("mult_exclude", "").upper().replace(",", " ").split()
     by_country = (mult_country or bool(mult_calls)
                   or any(conds & set(RELATIONS) for conds, _ in points))
@@ -352,18 +359,21 @@ def score_rules(cfg):
         # DXCC countries on each band")
         mult_calls = []
     return {"configured": bool(points or mults or mult_country or mult_calls
-                               or mult_prefix),
+                               or mult_prefix or mult_zone),
             "mult_prefix": mult_prefix, "mult_exclude": exclude,
+            "mult_zone": mult_zone,
             "points": points or [(frozenset(), 1)],
             "mults": mults, "mult_per": per, "mult_country": mult_country,
             "mult_calls": mult_calls,
-            "has_mults": bool(mults or mult_country or mult_calls or mult_prefix),
+            "has_mults": bool(mults or mult_country or mult_calls or mult_prefix
+                              or mult_zone),
             "countries": countries, "home": home}
 
 
 def qso_points(rules, call, mode, freq_hz):
     """Points of one QSO: the most specific matching entry of 'points'
-    (most conditions; the later one on a tie). No match = 0 points."""
+    (most conditions; with the same number, an entry for the own country
+    goes first, then the later one). No match = 0 points."""
     facts = {mode, mode_group(mode), band_of(freq_hz or 0).upper()}
     them = rules["countries"].lookup(call) if rules["countries"] else None
     if them and rules["home"]:
@@ -372,9 +382,20 @@ def qso_points(rules, call, mode, freq_hz):
             facts.add("OWN")
     best, value = -1, 0
     for conds, pts in rules["points"]:
-        if conds <= facts and len(conds) >= best:
-            best, value = len(conds), pts
+        # OWN is a special case of SAME, so 'OWN:0' beats 'SAME:1'
+        rank = 2 * len(conds) + ("OWN" in conds)
+        if conds <= facts and rank >= best:
+            best, value = rank, pts
     return value
+
+
+def zone_of(exch):
+    """CQ zone in a received exchange: its first number from 1 to 40, as
+    text without leading zeros ('05' and '5' are the same zone), or ''."""
+    for word in (exch or "").split():
+        if word.isdigit() and 1 <= int(word) <= 40:
+            return str(int(word))
+    return ""
 
 
 def mult_key(rules, exch, freq_hz):
@@ -402,6 +423,8 @@ def qso_mults(rules, call, exch, freq_hz):
     is in one of the mult_calls countries."""
     band = band_of(freq_hz or 0) if rules["mult_per"] == "band" else ""
     keys = [mult_key(rules, exch, freq_hz)]
+    if rules.get("mult_zone") and zone_of(exch):
+        keys.append((band, "zone:" + zone_of(exch)))
     if rules.get("mult_prefix") and wpx_prefix(call):
         keys.append((band, "pfx:" + wpx_prefix(call)))
     them = rules["countries"].lookup(call) if rules["countries"] else None
@@ -1727,9 +1750,13 @@ class Log:
         cab = cfg["contest"]
         mycall = cfg["station"]["call"]
         lines = ["START-OF-LOG: 3.0", f"CONTEST: {cab.get('contest', '')}",
-                 f"CALLSIGN: {mycall}",
-                 f"CATEGORY-OPERATOR: {cab.get('category_operator', 'SINGLE-OP')}"]
-        for key in ("band", "mode", "power"):
+                 f"CALLSIGN: {mycall}"]
+        if cab.get("location", "").strip():
+            lines.append(f"LOCATION: {cab['location'].strip().upper()}")
+        lines.append(
+            f"CATEGORY-OPERATOR: {cab.get('category_operator', 'SINGLE-OP')}")
+        for key in ("assisted", "band", "mode", "power", "station",
+                    "transmitter", "overlay"):
             if cab.get("category_" + key, "").strip():
                 lines.append(f"CATEGORY-{key.upper()}: "
                              f"{cab['category_' + key].strip().upper()}")
@@ -1737,6 +1764,9 @@ class Log:
         if rules["configured"]:
             result = compute_score(self.rows(), dupe_rules(cfg), rules)
             lines.append(f"CLAIMED-SCORE: {result['score']}")
+        for key in ("club", "operators"):
+            if cab.get(key, "").strip():
+                lines.append(f"{key.upper()}: {cab[key].strip()}")
         if cab.get("email"):
             lines.append(f"EMAIL: {cab['email']}")
         if cab.get("specific"):
@@ -1852,6 +1882,7 @@ def load_config(config_dir, contest):
                                "serial_start": "1", "worked_before": "",
                                "mult_country": "no", "mult_calls": "",
                                "mult_prefix": "no", "mult_exclude": "",
+                               "mult_zone": "no",
                                **FKEY_CONFIG, "esm_empty": "f1",
                                "esm_work_dupes": "yes",
                                "esm_required": "exch", "esm_start": "run",
@@ -2836,7 +2867,8 @@ class App:
         """Whether a callsign alone tells its multiplier in this contest."""
         return bool(self.scoring["has_mults"] and (
             self.scoring.get("mult_prefix") or self.scoring.get("mult_country")
-            or self.scoring.get("mult_calls")))
+            or self.scoring.get("mult_calls")
+            or (self.scoring.get("mult_zone") and self.countries)))
 
     def spot_hidden(self, row):
         """Whether the cluster filters hide this panel entry."""
@@ -2865,6 +2897,13 @@ class App:
                     return True
         if self.cluster_flag("new_mults_only") and self.call_mults():
             keys = qso_mults(self.scoring, row["call"], "", row["freq_hz"])
+            land = (self.countries.lookup(row["call"])
+                    if self.scoring.get("mult_zone") and self.countries else None)
+            if land and str(land.get("cq", "")).isdigit():
+                # the zone is not in the spot: the usual one of the country
+                band = (band_of(row["freq_hz"])
+                        if self.scoring["mult_per"] == "band" else "")
+                keys.append((band, f"zone:{int(land['cq'])}"))
             if all(key in self.score()["seen"] for key in keys):
                 return True
         return False

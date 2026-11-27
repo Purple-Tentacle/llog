@@ -596,7 +596,7 @@ There are two ways to get such a file:
   name, your exchange, the category, the `SPECIFIC` header, your locator,
   the dupe rule, points and multipliers, and writes the file.
 - **Copy an example.** The `examples` folder has ready-made files (`wna.ini`,
-  `wsa.ini`, `ok-dx-rtty.ini`, `darc-cwa.ini`). Copy one to
+  `wsa.ini`, `ok-dx-rtty.ini`, `darc-cwa.ini`, `cq-ww-cw.ini`). Copy one to
   `~/.config/llog/contests/` and fill in your exchange and locator.
 
 The file holds the contest name for the log header, the exchange you send
@@ -805,6 +805,7 @@ Scoring is set in the contest file as well:
 | `mult_exclude` | `NM, #` | Received exchanges that never count as a multiplier, even if `multipliers` matches them. Same patterns; `#` stands for any plain number, such as a serial number. |
 | `mult_prefix` | `yes` | Every callsign prefix counts as a multiplier (`DL1`, `DK5`, `OK1`; the usual WPX definition, so `DL1ABC/7` is `DL7` and `EA8/DL1ABC` is `EA8`) |
 | `mult_country` | `yes` | Every DXCC country counts as a multiplier |
+| `mult_zone` | `yes` | Every CQ zone counts as a multiplier. The zone is the first number from 1 to 40 in the received exchange; `05` and `5` are the same zone. Shown as `Z5` |
 | `mult_calls` | `OK` | Every station from the listed countries (by their main prefix) counts as a multiplier of its own. Ignored when you operate from one of these countries yourself. |
 | `mult_per` | `band` (default) or `contest` | Whether a multiplier counts once per band or once in the whole contest |
 
@@ -823,7 +824,10 @@ with `+`:
 
 For each QSO the entry with the most matching conditions wins, so
 `SAME:1, DX:2, 40M+SAME:3, 40M+DX:6` gives 1 or 2 points in general and 3 or
-6 on 40 m. A QSO that matches no entry scores 0.
+6 on 40 m. A QSO that matches no entry scores 0. A station in your own
+country is also on your own continent; where both `OWN` and `SAME` have an
+entry, `OWN` wins, so `DX:3, SAME:1, OWN:0` (CQ WW) gives 0 points inside your
+country.
 
 The score is the sum of QSO points times the number of multipliers, or just
 the points when no multipliers are configured. Dupes (according to the dupe
@@ -859,9 +863,12 @@ prefix (`EA8/DL1ABC` is Canary Islands); `/MM` has no country.
 | `run_f1` ... `sp_f10`, `esm_...` | | CW message keys and ESM settings, see "CW messages and ESM" |
 | `mode` | `RTTY` | Log every QSO with this mode, whatever the radio reports (useful when the radio is in a generic data mode) |
 | `category_band`, `category_mode`, `category_power` | `ALL`, `RTTY`, `LOW` | Written as `CATEGORY-BAND` etc. into the Cabrillo header |
+| `category_assisted`, `category_overlay`, `category_station`, `category_transmitter` | `ASSISTED` | More `CATEGORY-...` lines of the Cabrillo header, for contests that ask for them; left out when empty |
+| `location`, `club`, `operators` | `DX` | The `LOCATION`, `CLUB` and `OPERATORS` lines of the Cabrillo header; left out when empty |
 
 Ready-made contest files are in `examples/`: `wna.ini`, `wsa.ini`,
-`ok-dx-rtty.ini` and `darc-cwa.ini` (DARC CW-Ausbildungscontest). Copy them to `~/.config/llog/contests/` and adjust the
+`ok-dx-rtty.ini`, `darc-cwa.ini` (DARC CW-Ausbildungscontest) and
+`cq-ww-cw.ini` (CQ World-Wide DX Contest, CW). Copy them to `~/.config/llog/contests/` and adjust the
 marked lines:
 
 ```

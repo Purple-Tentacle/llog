@@ -539,6 +539,46 @@ cab6 = os.path.join(work, "ok.cbr"); app6.log.export_cabrillo(cab6, c6); cab6 = 
 assert "CONTEST: OK-DX-RTTY" in cab6 and "CATEGORY-BAND: ALL" in cab6
 assert "CATEGORY-POWER: LOW" in cab6 and "CATEGORY-MODE: RTTY" in cab6
 assert "CLAIMED-SCORE: 2" in cab6 and "QSO: 14085 RY " in cab6 and " 599 14 " in cab6
+# CQ WW CW: points by continent and country, zone and country multipliers per band
+cw = m.load_config(work, os.path.join(EX, "cq-ww-cw.ini"))
+drw, srw = m.dupe_rules(cw), m.score_rules(cw)
+def cwq(*qsos):
+    return [dict(id=i, ts=f"2026-11-28 10:{i:02d}:00", call=c, freq_hz=f, mode="CW",
+                 exch_r=e) for i, (c, f, e) in enumerate(qsos, 1)]
+r = m.compute_score(cwq(("DL1ABC", 14010000, "14"),       # own country: 0 pt, mults Z14 + DL
+                        ("OK1AAA", 14011000, "15"),       # same continent: 1 pt, Z15 + OK
+                        ("K1ABC", 14012000, "05"),        # other continent: 3 pt, Z5 + K
+                        ("K7ABC", 14013000, "3"),         # 3 pt, Z3 (K already)
+                        ("AA1AA", 14014000, "5"),         # 3 pt, no new mult ('5' = '05')
+                        ("K1ABC", 7012000, "05"),         # 3 pt, Z5 + K again on 40m
+                        ("K1ABC", 14012000, "05"),        # dupe on 20m
+                        ("EA8XX", 14015000, "33"),        # Africa: 3 pt, Z33 + EA8
+                        ("W1AW/MM", 14016000, "08"),      # maritime mobile: zone only, 0 pt
+                        ("OL5Y", 14017000, "41")),        # 1 pt, 41 is no zone; OK already
+                    drw, srw)
+assert (r["points"], r["mults"], r["score"]) == (17, 12, 204), r
+assert r["per_qso"][1] == (0, False, 2) and r["per_qso"][5] == (3, False, 0) and r["per_qso"][7] == (0, True, 0)
+assert r["per_qso"][9] == (0, False, 1) and r["per_qso"][10] == (1, False, 0)
+assert m.zone_of("05") == "5" and m.zone_of("599 14") == "14" and m.zone_of("0") == "" and m.zone_of("N13") == ""
+assert m.show_mult("zone:5") == "Z5" and m.qso_points(srw, "DL1ABC", "CW", 14e6) == 0
+cw2 = m.load_config(work, os.path.join(EX, "cq-ww-cw.ini")); cw2["contest"]["points"] = "OWN:0, SAME:1, DX:3"
+assert m.qso_points(m.score_rules(cw2), "DL1ABC", "CW", 14e6) == 0     # whatever the order
+appw = m.App(cw, m.Log(os.path.join(work, "cqww.db")))
+appw.manual_freq["A"] = 14012000; assert appw.mode() == "CW"
+appw.val["call"] = "K1ABC"; assert appw.new_mult() == "K"
+appw.val["exch"] = "05"; assert appw.new_mult() == "Z5, K"; appw.enter()
+appw.val["call"] = "AA1AA"; appw.val["exch"] = "4"; assert appw.new_mult() == "Z4"
+assert [t for row in appw.mult_panel(100) for t, _ in row][1:] == ["K", "Z5"]
+appw.cluster.feed("DX de DL1AAA:     14025.0  N2XX         CQ                             2153Z")
+appw.cluster.feed("DX de DL1AAA:     14026.0  OK2XX        CQ                             2153Z")
+appw.cfg["cluster"]["new_mults_only"] = "yes"; appw.val["call"] = ""
+assert [x["call"] for x in appw.panel_rows()] == ["OK2XX"]         # N2XX: country K and zone 5 are worked
+appw.cfg["cluster"]["new_mults_only"] = "no"
+cabw = os.path.join(work, "cqww.cbr"); appw.log.export_cabrillo(cabw, cw); cabw = open(cabw).read()
+assert cabw.splitlines()[1:5] == ["CONTEST: CQ-WW-CW", "CALLSIGN: DA2IT", "LOCATION: DX", "CATEGORY-OPERATOR: SINGLE-OP"]
+assert "CATEGORY-ASSISTED: ASSISTED" in cabw and "CATEGORY-BAND: ALL" in cabw and "CATEGORY-MODE: CW" in cabw
+assert "CATEGORY-OVERLAY" not in cabw and "CLUB:" not in cabw and "CLAIMED-SCORE: 6" in cabw
+assert "QSO: 14012 CW " in cabw and " DA2IT         599 14     K1ABC         599 05" in cabw
 # the same contest operated from OK: own callsign per contest, no station multipliers
 c7 = m.load_config(work, os.path.join(EX, "ok-dx-rtty.ini"))
 c7["contest"]["call"] = "ok/da2it"; open(os.path.join(work, "contests", "okp.ini"), "w").write(
