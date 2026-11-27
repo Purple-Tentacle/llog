@@ -8,6 +8,7 @@ through the QRZ.com XML API. See README.md.
     python3 llog.py <contest> [logfile.db]
 """
 import argparse
+import collections
 import configparser
 import curses
 import fcntl
@@ -1226,9 +1227,18 @@ class Cluster(threading.Thread):
         self._lock = threading.Lock()
         self._sock = None
         self.reply = ""       # what the node answered to our last spot
+        # the last lines of the telnet session, for the telnet window
+        self.lines = collections.deque(maxlen=300)
         self._sent = (0, "")  # (time, dx call) of the spot we sent last
 
+    def note(self, text):
+        """Adds a line to the telnet window (control characters removed)."""
+        text = "".join(ch for ch in text if ch.isprintable()).rstrip()
+        if text.strip():
+            self.lines.append(text)
+
     def feed(self, line):
+        self.note(line)
         seen = time.time()
         waiting = seen - self._sent[0] < 10      # just sent a spot ourselves
         match = SPOT_RE.match(line.strip())
@@ -1273,6 +1283,7 @@ class Cluster(threading.Thread):
         except OSError as exc:
             return f"Spot not sent: {exc}"
         self._sent = (time.time(), call.upper())
+        self.note("> " + line)
         return ""
 
     def spots(self, band):
@@ -1304,12 +1315,15 @@ class Cluster(threading.Thread):
                             sock.settimeout(120)
                             self._sock = sock
                             logged_in, self.status = True, "connected"
+                            self.note(f"--- connected to {self.host}:{self.port} "
+                                      f"as {self.call}")
                         buf += re.sub(rb"\xff[\xfb-\xfe].", b"", data)
                         *lines, buf = buf.split(b"\n")
                         for line in lines:
                             self.feed(line.decode("latin-1"))
             except OSError as exc:
                 self.status = f"offline: {exc}"
+                self.note(f"--- {self.status}")
             self._sock = None
             time.sleep(30)
 
@@ -3027,7 +3041,18 @@ class App:
                 line += 1
             elif not spots:
                 put(line, panel_x + 1, "nothing on this band yet")
-            room = max(h - 3 - line, 1)             # down to the message line
+            # the telnet window: bottom right, from the height of the
+            # multiplier line down to the message line; the list ends above it
+            tel_top = h - 9 - extra - len(mult_rows)
+            telnet = bool(self.cluster.host) and tel_top - line >= 6
+            room = max((tel_top if telnet else h - 3) - line, 1)
+            if telnet:
+                put(tel_top, panel_x, (f"-- Cluster telnet {self.cluster.host} "
+                                       .ljust(panel_w - 2, "-")), curses.A_BOLD)
+                shown = list(self.cluster.lines)[-(h - 4 - tel_top):]
+                for n, text in enumerate(shown):
+                    put(tel_top + 1 + n, panel_x + 1,
+                        re.sub(r" {2,}", " ", text)[:panel_w - 3])
             calls = [spot["call"] for spot in spots]
             kinds = ["here" if spot.get("here") else spot["kind"]
                      for spot in spots]

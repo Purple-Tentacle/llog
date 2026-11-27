@@ -361,8 +361,7 @@ first. The command is chosen by `tune_command` in the `[rig]` section:
 
 ## DX cluster and band map
 
-A panel on the right side of the screen, from the top down to the message
-line, shows what is on the band of the current entry row. It follows the band when you QSY or switch rows, and Alt-B switches
+A panel on the right side of the screen shows what is on the band of the current entry row. It follows the band when you QSY or switch rows, and Alt-B switches
 between two views:
 
 - **Newest first:** cluster spots and stations you stored for later, newest
@@ -405,6 +404,14 @@ on the frequency it was logged with. llog asks for an optional comment; Enter
 sends the spot, Esc cancels. A spot is public and cannot be withdrawn. The
 message line then shows the node's answer: that the spot was accepted (it
 came back from the node), or the node's own text if it refused it.
+
+**Telnet window.** The bottom right corner shows the telnet session with the
+cluster node as it comes in: the node's spots of all bands, its answers and
+messages, and the spots you send (marked `>`). It starts at the height of
+the multiplier line and ends above the message line; the list of spots ends
+above it. Several spaces in a row are shown as one, so that a spot line fits;
+longer lines are cut off. The window is left out when no cluster node is
+configured or the terminal is too low for it.
 
 The panel needs a terminal at least 142 columns wide; on narrower terminals
 it is hidden. It works without a cluster node too, with stored and worked

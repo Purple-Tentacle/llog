@@ -831,12 +831,14 @@ assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
 assert b"Mults" in txt and b"NOTO" in txt and b"O55" in txt
 assert b"Detect radio and save settings" in txt and b"not set up yet" in txt
 assert b"Newest" in txt and b"K1ABC" in txt and b"0m CQ TEST" in txt
+assert b"-- Cluster telnet 127.0.0.1 --" in txt and b"--- connected to 127.0.0.1:" in txt
 assert b"Band map 40m" in txt and b"stored" in txt and state["cluster_login"].startswith(b"DA2IT-1\r\n")
 cl = m.Cluster("", 0, "DA2IT")
 cl.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
 cl.feed("DX de DL2BBB-#:    7030.5  DK9ZZ        cq                             2154Z")
 cl.feed("DX de DL1AAA:     14027.3  K1ABC        QSY                            2156Z")
-cl.feed("To ALL de DL1AAA: hello"); cl.feed("DX de garbage")
+cl.feed("To ALL de DL1AAA: hello\x07\r"); cl.feed("DX de garbage"); cl.feed("  \r")
+assert list(cl.lines)[-2:] == ["To ALL de DL1AAA: hello", "DX de garbage"] and len(cl.lines) == 5
 assert [(x["call"], x["freq_hz"], x["time"]) for x in cl.spots("20m")] == \
     [("K1ABC", 14027300, "2156")] and len(cl.spots("40m")) == 1 and not cl.spots("2m")
 cl._spots[("K1ABC", "20m")]["seen"] -= 31 * 60; assert not cl.spots("20m")   # expired
