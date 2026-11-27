@@ -1234,8 +1234,28 @@ class Cluster(threading.Thread):
         self.lines = collections.deque(maxlen=300)
         self._sent = (0, "")  # (time, dx call) of the spot we sent last
 
+    closing = False       # llog is quitting: no reconnect
+
     def active(self):
-        return bool(self.host) and (self.enabled is None or self.enabled())
+        return (bool(self.host) and not self.closing
+                and (self.enabled is None or self.enabled()))
+
+    @staticmethod
+    def _logout(sock):
+        """Leaves the node properly: its 'bye' command, then the connection
+        is closed, so that the node does not keep the session as open."""
+        try:
+            sock.sendall(b"bye\r\n")
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def close(self):
+        """Called when llog quits."""
+        self.closing = True
+        sock, self._sock = self._sock, None
+        if sock is not None:
+            self._logout(sock)
 
     def note(self, text):
         """Adds a line to the telnet window (control characters removed)."""
@@ -1305,7 +1325,7 @@ class Cluster(threading.Thread):
         return sorted(found, key=lambda v: v["seen"], reverse=True)
 
     def run(self):
-        while self.host:
+        while self.host and not self.closing:
             if not self.active():            # switched off in the menu
                 self.status = "off"
                 time.sleep(1)
@@ -1335,7 +1355,9 @@ class Cluster(threading.Thread):
                         for line in lines:
                             self.feed(line.decode("latin-1"))
                         if not self.active():
-                            break            # leaves the node
+                            if not self.closing:     # switched off in the menu
+                                self._logout(sock)
+                            break
             except OSError as exc:
                 self.status = f"offline: {exc}"
                 self.note(f"--- {self.status}")
@@ -3651,6 +3673,8 @@ def main():
     try:
         curses.wrapper(app.run)
     finally:
+        app.cluster.close()              # log out of the cluster nodes
+        app.sota.close()
         if app.rigctld.ours():           # a rigctld we started ends with us
             print(app.rigctld.stop())
     saved = app.auto_backup(force=True)

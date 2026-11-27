@@ -464,9 +464,12 @@ def tiny_node(srv):
     while True:
         conn, _ = srv.accept(); conn.sendall(b"login: "); tiny["logins"].append(conn.recv(100))
         conn.sendall(("Hello\r\n" + SOTA_LINE + "\r\n").encode())
-        while conn.recv(100): pass
+        while True:
+            data = conn.recv(100)
+            if not data: break
+            tiny["bye"].append(data)
         tiny["closed"] += 1
-tiny = {"logins": [], "closed": 0, "on": False}
+tiny = {"logins": [], "closed": 0, "on": False, "bye": []}
 tsrv = socket.socket(); tsrv.bind(("127.0.0.1", 0)); tsrv.listen()
 threading.Thread(target=tiny_node, args=(tsrv,), daemon=True).start()
 node = m.Cluster("127.0.0.1", tsrv.getsockname()[1], "DA2IT", source="SOTA", enabled=lambda: tiny["on"])
@@ -476,6 +479,7 @@ assert node.status == "connected" and tiny["logins"] == [b"DA2IT\r\nsh/dx 50\r\n
 assert [(x["call"], x["source"]) for x in node.spots("20m")] == [("DL3ABC/P", "SOTA")]
 tiny["on"] = False; time.sleep(6.5)
 assert node.status == "off" and tiny["closed"] == 1 and node.spots("20m") == []
+assert tiny["bye"] == [b"bye\r\n"]                           # switched off: logged out as well
 menu("d", "p"); appf.menus = []; appf.web.fetch("pota"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
 look = lambda c: (lambda i: i and (i["prefix"], i["cont"], i["cq"]))(cty.lookup(c))
 assert look("DA2IT") == ("DL", "EU", "14") and look("OL5Y") == ("OK", "EU", "15")
@@ -958,6 +962,7 @@ assert b"Detect radio and save settings" in txt and b"not set up yet" in txt
 assert b"Newest" in txt and b"K1ABC" in txt and b"0m DX   CQ TEST" in txt
 assert b"-- Cluster telnet 127.0.0.1 --" in txt and b"--- connected to 127.0.0.1:" in txt
 assert b"Band map 40m" in txt and b"stored" in txt and state["cluster_login"].startswith(b"DA2IT-1\r\n")
+assert state["cluster_rx"].endswith(b"bye\r\n")              # llog logs out of the node when it quits
 cl = m.Cluster("", 0, "DA2IT")
 cl.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
 cl.feed("DX de DL2BBB-#:    7030.5  DK9ZZ        cq                             2154Z")
