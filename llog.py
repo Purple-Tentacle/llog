@@ -1884,7 +1884,7 @@ def load_config(config_dir, contest):
                                "serial_start": "1", "worked_before": "",
                                "mult_country": "no", "mult_calls": "",
                                "mult_prefix": "no", "mult_exclude": "",
-                               "mult_zone": "no",
+                               "mult_zone": "no", "exchange_prefill": "",
                                **FKEY_CONFIG, "esm_empty": "f1",
                                "esm_work_dupes": "yes",
                                "esm_required": "exch", "esm_start": "run",
@@ -2013,6 +2013,13 @@ class App:
         self.history = load_history(cfg)
         self.partial = PartialCheck(cfg)
         self.countries = load_countries(cfg)     # for the cluster filters
+        # exchange_prefill = zone: the received exchange is filled in with
+        # the CQ zone of the callsign's country
+        self.prefill = cfg["contest"].get("exchange_prefill", "").strip().lower()
+        if self.prefill not in ("", "zone"):
+            sys.exit("Contest file: exchange_prefill must be 'zone' or empty")
+        if self.prefill and not self.countries:
+            load_countries(cfg, needed=True)     # explains what is missing
         self.web = WebSpots(cfg, cfg["cluster"].getint("minutes"))
         # SOTA spots: SOTA's own cluster node, switched in the cluster menu
         self.sota = Cluster(cfg["cluster"]["sota_host"].strip(),
@@ -2151,6 +2158,20 @@ class App:
             grid = (self.qrz.info(call) or {}).get("grid", "")
             if is_locator(grid):
                 val["loc"], entry["auto"]["loc"] = grid.upper()[:8], call
+        if self.prefill == "zone":
+            # the same for the exchange: the usual CQ zone of the country
+            for entry in self.entry.values():
+                val, call = entry["val"], entry["val"]["call"]
+                if entry["auto"].get("exch") not in (None, call):
+                    val["exch"] = ""
+                    del entry["auto"]["exch"]
+                if (val["exch"] or not is_call(call)
+                        or entry["manual"].get("exch") == call):
+                    continue
+                land = self.countries.lookup(call)
+                if land and str(land.get("cq", "")).isdigit():
+                    val["exch"] = f"{int(land['cq']):02d}"
+                    entry["auto"]["exch"] = call
 
     def dupe(self):
         if self.edit:      # compare with the QSOs made before the edited one
@@ -2247,7 +2268,8 @@ class App:
             return 0 if (self.focus == 0 and self.spot) else self.voice_memory(1) and 1
         if (self.esm_mode == "sp" and is_call(call) and self.freq()
                 and not (self.val["loc"] and not is_locator(self.val["loc"]))
-                and any(not self.val[f].strip() for f in self.esm_required)):
+                and (any(not self.val[f].strip() for f in self.esm_required)
+                     or self.must_call(call))):
             return 4
         return 0
 
@@ -2310,6 +2332,8 @@ class App:
                 entry["esm_exch"] = entry["esm_exch"] or self.exch_sent()
                 if self.esm_mode == "run":
                     entry["esm_sent"] = call
+            elif (number == 4 and self.esm_mode == "sp" and is_call(call)):
+                entry["esm_sent"] = call         # called him by hand
 
     # ---- repeated CQ (F11)
     def cq_pause(self):
@@ -2382,8 +2406,9 @@ class App:
         elif self.voice_next():
             # ESM in SSB: the radio's voice memory; in S&P on to the exchange
             if self.send_voice(self.voice_next()) and call:
+                self.entry[self.row]["esm_sent"] = call
                 missing = [f for f in self.esm_required if not self.val[f].strip()]
-                self.focus = FIELDS.index(missing[0])
+                self.focus = FIELDS.index((missing or ["exch"])[0])
         elif not call and esm:
             # ESM, empty call field: CQ when running, own call in S&P
             keys, prefix, _, _ = self.esm_next()
@@ -2428,13 +2453,20 @@ class App:
                 and not entry["esm_sent"] and self.dupe()):
             return "dupe_run" if run else "dupe_sp"
         missing = [f for f in self.esm_required if not self.val[f].strip()]
-        if missing or (run and not entry["esm_sent"]):
+        if missing or (run and not entry["esm_sent"]) or self.must_call(call):
             if not run:
                 return "mycall"
             return "call" if entry["esm_sent"] != call else "again"
         if self.dupe() and self.dupe_ok != call:
             return "dupe_warn"
         return "finish"
+
+    def must_call(self, call):
+        """S&P with an exchange that was only filled in automatically: the
+        station has to be called before the QSO can be finished."""
+        entry = self.entry[self.row]
+        return (self.esm_mode == "sp" and entry["auto"].get("exch") == call
+                and entry["esm_sent"] != call)
 
     def esm_next(self):
         """What Enter would do now: (function keys it sends, text sent in
@@ -2493,7 +2525,7 @@ class App:
             if sent.startswith("CW:"):
                 self.msg += "  -  " + sent
         else:
-            if step == "call":
+            if step in ("call", "mycall"):
                 entry["esm_sent"] = call
             missing = [f for f in self.esm_required if not self.val[f].strip()]
             self.focus = FIELDS.index((missing or ["exch"])[0])
@@ -3133,6 +3165,9 @@ class App:
             self.dupe_ok = ""
             self.typed(name)
         elif isinstance(ch, str) and ch.isprintable():
+            entry = self.entry[self.row]
+            if name != "call" and entry["auto"].get(name) == self.val["call"]:
+                self.val[name] = ""      # typing replaces what was filled in
             if len(self.val[name]) < WIDTHS[name]:
                 self.val[name] += ch.upper()
             self.dupe_ok = ""

@@ -574,6 +574,37 @@ appw.cluster.feed("DX de DL1AAA:     14026.0  OK2XX        CQ                   
 appw.cfg["cluster"]["new_mults_only"] = "yes"; appw.val["call"] = ""
 assert [x["call"] for x in appw.panel_rows()] == ["OK2XX"]         # N2XX: country K and zone 5 are worked
 appw.cfg["cluster"]["new_mults_only"] = "no"
+# exchange_prefill = zone: the CQ zone of the country is filled in and can be typed over
+appz = m.App(m.load_config(work, os.path.join(EX, "cq-ww-cw.ini")), m.Log(os.path.join(work, "cqwwz.db")))
+appz.manual_freq["A"] = 14012000; EXZ = m.FIELDS.index("exch"); sentz = []
+def typez(text):
+    for ch in text: appz.entry_key(ch)
+    appz.sync_prefill()
+assert appz.prefill == "zone"; typez("K7AB"); assert appz.val["exch"] == "03"
+typez("\x7f"); assert appz.val["exch"] == "03"; typez("\x7f\x7f"); assert appz.val["exch"] == ""     # K7A, then K: no callsign left
+typez("1ABC"); assert appz.val["exch"] == "05"; appz.clear()
+typez("OK1AA"); assert appz.val["exch"] == "15" and appz.new_mult() == "Z15, OK"
+appz.focus = EXZ; typez("1"); assert appz.val["exch"] == "1"; typez("4")     # typing replaces the zone
+assert appz.val["exch"] == "14"; typez("\x7f\x7f"); assert appz.val["exch"] == ""   # emptied by hand: stays empty
+appz.clear(); typez("ZZ9ZZ"); assert appz.val["exch"] == ""                  # unknown country: nothing
+appz.clear(); typez("EA8XX"); appz.enter()                                  # without ESM: Enter logs with the zone
+assert appz.log.rows()[-1]["exch_r"] == "33"
+# with ESM: Run answers, then logs; S&P calls first although the exchange is already there
+appz.rig.online, appz.rig.mode["A"] = True, "CW"; appz.rig.send_cw = sentz.append; appz.rig.freq["A"] = 14012000
+typez("K1ABC"); appz.enter(); assert sentz == ["K1ABC 5NN 14"] and appz.focus == EXZ and appz.log.count() == 1
+appz.enter(); assert sentz[-1] == "TU DA2IT" and appz.log.rows()[-1]["exch_r"] == "05"
+appz.esm_mode = "sp"; typez("N2XX"); assert appz.val["exch"] == "05"
+assert appz.key_line()[1] == "Enter: F4"; appz.enter()
+assert sentz[-1] == "DA2IT" and appz.log.count() == 2 and appz.focus == EXZ
+assert appz.key_line()[1] == "Enter: F2 + log"; appz.enter()
+assert sentz[-1] == "TU 5NN 14" and appz.log.count() == 3
+typez("OK2XX"); appz.fkey(4); appz.enter()                                  # called by hand with F4: Enter finishes
+assert sentz[-2:] == ["DA2IT", "TU 5NN 14"] and appz.log.rows()[-1]["exch_r"] == "15"
+typez("OL5Y"); appz.focus = EXZ; typez("15"); appz.enter()                  # zone typed by hand: as before
+assert sentz[-1] == "TU 5NN 14" and appz.log.count() == 5
+bad = m.load_config(work, os.path.join(EX, "cq-ww-cw.ini")); bad["contest"]["exchange_prefill"] = "dok"
+try: m.App(bad, m.Log(os.path.join(work, "bad.db"))); assert False
+except SystemExit as exc: assert "exchange_prefill" in str(exc)
 # NON-ASSISTED in the contest file: no cluster, SOTA or POTA spots at all
 cwn = m.load_config(work, os.path.join(EX, "cq-ww-cw.ini")); cwn["contest"]["category_assisted"] = "non-assisted"
 cwn["cluster"]["pota"] = cwn["cluster"]["sota"] = "yes"; cwn["qrz"]["username"] = "someone"; cwn["qrz"]["password"] = "x"

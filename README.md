@@ -967,6 +967,34 @@ corrected in the QSO list like any other cell.
 The received exchange is a free-text field, so a received number is typed as
 the station sends it.
 
+
+### Pre-filling the received exchange with the zone
+
+For contests whose exchange is the CQ zone, set
+
+```
+exchange_prefill = zone
+```
+
+in the contest file. As soon as the call field holds a callsign, llog fills
+the received exchange with the usual CQ zone of that station's country, from
+the country file (`05` for `K1ABC`, `15` for `OK1AA`). It follows the
+callsign while you type and is empty for a callsign the country file does
+not know.
+
+The zone is a suggestion. Large countries span several zones, and a station
+may send another one than the file says, so listen to what it sends. To
+correct it, go to the exchange field and type: the first key replaces the
+suggestion. A zone you typed or emptied yourself is not touched again. The
+same now applies to a locator that came from the QRZ lookup: typing replaces
+it.
+
+With ESM, a pre-filled zone does not shorten the QSO. When running, Enter
+still sends the callsign and your exchange first and logs on the second
+Enter. In search and pounce, Enter first sends your call (F4), although the
+exchange field is already filled, and the next Enter sends your exchange and
+logs; if you called the station yourself with F4, the next Enter finishes.
+
 ## Test
 
 ```
