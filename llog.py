@@ -14,6 +14,7 @@ import curses
 import fcntl
 import fnmatch
 import getpass
+import json
 import math
 import os
 import queue
@@ -1266,7 +1267,7 @@ class Cluster(threading.Thread):
         hz = round(float(khz) * 1000)
         spot = {"call": call.upper(), "freq_hz": hz, "band": band_of(hz),
                 "spotter": spotter.rstrip("-#:"), "comment": comment,
-                "skimmer": "#" in spotter,
+                "skimmer": "#" in spotter, "source": "DX",
                 "time": hhmm, "seen": seen}
         with self._lock:
             old = self._spots.get((spot["call"], spot["band"]))
@@ -1327,6 +1328,115 @@ class Cluster(threading.Thread):
                 self.note(f"--- {self.status}")
             self._sock = None
             time.sleep(30)
+
+
+# ------------------------------------------------- POTA and SOTA spots
+def _utc_seconds(stamp):
+    """'2026-11-26T10:52:55' (UTC, with or without fractions or Z) as time."""
+    return datetime.strptime(str(stamp)[:19], "%Y-%m-%dT%H:%M:%S").replace(
+        tzinfo=timezone.utc).timestamp()
+
+
+def _web_spot(source, call, hz, spotter, comment, seen, skimmer=False):
+    call = str(call or "").strip().upper()
+    if not is_call(call) or not band_of(hz):
+        return None
+    return {"call": call, "freq_hz": hz, "band": band_of(hz),
+            "spotter": str(spotter or "").upper().rstrip("-#:"),
+            "comment": " ".join(str(comment).split()), "time": "",
+            "seen": seen, "skimmer": skimmer, "source": source}
+
+
+def parse_pota(text):
+    """Spots from the POTA service (api.pota.app/spot/activator): a JSON
+    list with activator, frequency in kHz, mode, reference, spotTime (UTC),
+    spotter, comments and source."""
+    spots = []
+    for item in json.loads(text):
+        try:
+            spot = _web_spot(
+                "POTA", item.get("activator"),
+                round(float(item.get("frequency") or 0) * 1000),
+                item.get("spotter"),
+                f"{item.get('reference') or ''} {item.get('mode') or ''} "
+                f"{item.get('comments') or ''}",
+                _utc_seconds(item.get("spotTime")),
+                item.get("source") == "RBN" or "#" in str(item.get("spotter")))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if spot:
+            spots.append(spot)
+    return spots
+
+
+def parse_sota(text):
+    """Spots from SOTAwatch (api2.sota.org.uk/api/spots/...): a JSON list
+    with activatorCallsign, frequency in MHz, mode, associationCode and
+    summitCode, timeStamp (UTC), callsign of the spotter and comments."""
+    spots = []
+    for item in json.loads(text):
+        try:
+            freq = float(str(item.get("frequency") or 0).replace(",", "."))
+            hz = round(freq * (1e6 if freq < 1000 else 1e3))   # MHz, or kHz
+            ref = str(item.get("summitCode") or "")
+            if item.get("associationCode") and "/" not in ref:
+                ref = f"{item['associationCode']}/{ref}"
+            spot = _web_spot(
+                "SOTA", item.get("activatorCallsign"), hz, item.get("callsign"),
+                f"{ref} {item.get('mode') or ''} {item.get('comments') or ''}",
+                _utc_seconds(item.get("timeStamp")),
+                "#" in str(item.get("callsign")))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if spot:
+            spots.append(spot)
+    return spots
+
+
+class WebSpots(threading.Thread):
+    """Fetches the current POTA and SOTA spots from their own services once
+    a minute, for the sources that are switched on."""
+    PARSERS = {"pota": parse_pota, "sota": parse_sota}
+
+    def __init__(self, cfg, minutes=30, every=60):
+        super().__init__(daemon=True)
+        self.cfg, self.max_age, self.every = cfg, minutes * 60, every
+        self._spots = {"pota": [], "sota": []}
+        self.status = {"pota": "off", "sota": "off"}
+        self.wake = threading.Event()        # set to fetch right away
+
+    def on(self, source):
+        return self.cfg["cluster"].get(source, "no").strip().lower() in (
+            "yes", "true", "on", "1")
+
+    def fetch(self, source):
+        if not self.on(source):
+            self._spots[source], self.status[source] = [], "off"
+            return
+        try:
+            request = urllib.request.Request(
+                self.cfg["cluster"][source + "_url"].strip(),
+                headers={"User-Agent": "llog contest logger"})
+            with urllib.request.urlopen(request, timeout=10) as resp:
+                spots = self.PARSERS[source](resp.read().decode("utf-8", "replace"))
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            self.status[source] = f"failed: {exc}"
+            return
+        self._spots[source] = spots
+        self.status[source] = f"{len(spots)} spots"
+
+    def spots(self, band):
+        limit = time.time() - self.max_age
+        return [spot for source in ("pota", "sota") if self.on(source)
+                for spot in self._spots[source]
+                if spot["band"] == band and spot["seen"] >= limit]
+
+    def run(self):
+        while True:
+            for source in ("pota", "sota"):
+                self.fetch(source)
+            self.wake.wait(self.every)
+            self.wake.clear()
 
 
 # --------------------------------------------------------------------- qrz
@@ -1679,7 +1789,11 @@ def load_config(config_dir, contest):
                                "call": "", "telnet_window": "yes",
                                "spot_from": "", "spot_dx": "",
                                "spot_comment": "", "hide_worked": "no",
-                               "hide_skimmer": "no", "new_mults_only": "no"},
+                               "hide_skimmer": "no", "new_mults_only": "no",
+                               "pota": "no", "sota": "no",
+                               "pota_url": "https://api.pota.app/spot/activator",
+                               "sota_url":
+                                   "https://api2.sota.org.uk/api/spots/50/all"},
                    "backup": {"minutes": "5", "keep": "50", "folder": ""},
                    "cw": {"enter_sends": "yes", "cq_pause": "3"},
                    "contest": {"contest": "", "exchange_sent": "",
@@ -1816,6 +1930,7 @@ class App:
         self.history = load_history(cfg)
         self.partial = PartialCheck(cfg)
         self.countries = load_countries(cfg)     # for the cluster filters
+        self.web = WebSpots(cfg, cfg["cluster"].getint("minutes"))
         self.filtered = 0     # panel entries the cluster filters hide
         self._logged = (None, frozenset())   # (log state, callsigns in the log)
         self.entry = {v: self.new_entry() for v in "AB"}
@@ -2524,11 +2639,18 @@ class App:
                 "info": ["Node: " + (f"{self.cluster.host}:{self.cluster.port}, "
                                      f"{self.cluster.status}"
                                      if self.cluster.host else "none configured"),
-                         "Filters apply to cluster spots, not to stored stations."],
+                         "Filters apply to spots of all sources, not to stored "
+                         "stations."],
                 "items": [
                     ("w", f"Telnet window: "
                           f"{'shown' if self.telnet_window() else 'hidden'} (change)",
                      "telnet_window"),
+                    ("p", "POTA spots: " + ("on, " + self.web.status["pota"]
+                                            if self.web.on("pota") else "off")
+                          + " (change)", "pota"),
+                    ("s", "SOTA spots: " + ("on, " + self.web.status["sota"]
+                                            if self.web.on("sota") else "off")
+                          + " (change)", "sota"),
                     ("f", f"Spotters from: {some('spot_from')} (change)", "spot_from"),
                     ("d", f"DX stations from: {some('spot_dx')} (change)", "spot_dx"),
                     ("c", "Comment contains: "
@@ -2543,7 +2665,7 @@ class App:
                           "(change)", "new_mults_only"),
                     ("x", "Clear all filters", "filters_off")]}
 
-    CLUSTER_ACTIONS = ("telnet_window", "spot_from", "spot_dx", "spot_comment",
+    CLUSTER_ACTIONS = ("telnet_window", "pota", "sota", "spot_from", "spot_dx", "spot_comment",
                        "hide_worked", "hide_skimmer", "new_mults_only",
                        "filters_off")
 
@@ -2557,6 +2679,14 @@ class App:
                         "hidden; the list uses the whole panel") + f"{problem}.")
             if new == "yes" and not self.cluster.host:
                 self.msg += " It appears once a cluster node is configured."
+        elif action in ("pota", "sota"):
+            new = "no" if self.web.on(action) else "yes"
+            problem = self.save_setting("cluster", **{action: new})
+            self.web.status[action] = "fetching ..." if new == "yes" else "off"
+            self.web.wake.set()
+            self.msg = (f"{action.upper()} spots are " + (
+                "fetched from the " + action.upper() + " service once a minute"
+                if new == "yes" else "off") + f"{problem}.")
         elif action in ("spot_from", "spot_dx"):
             what = "Spotters" if action == "spot_from" else "DX stations"
 
@@ -2573,10 +2703,11 @@ class App:
         elif action == "spot_comment":
             def save(value):
                 problem = self.save_setting("cluster", spot_comment=value.strip())
-                self.msg = (f"Spots shown: comment contains "
+                self.msg = (f"Spots shown: source or comment contains "
                             f"'{value.strip()}'{problem}." if value.strip() else
                             f"Comment filter off{problem}.")
-            self.prompt = {"text": "Show only spots whose comment contains "
+            self.prompt = {"text": "Show only spots with one of these words in "
+                                   "the source or comment, e.g. pota, sota "
                                    "(empty = all): ", "value": "", "action": save}
             reopen = False
         elif action == "filters_off":
@@ -2617,8 +2748,10 @@ class App:
             return False
         if self.cluster_flag("hide_skimmer") and row.get("skimmer"):
             return True
-        word = cl.get("spot_comment", "").strip().upper()
-        if word and word not in row["comment"].upper():
+        words = [w.strip() for w in cl.get("spot_comment", "").upper().split(",")
+                 if w.strip()]
+        text = f"{row.get('source', '')} {row['comment']}".upper()
+        if words and not any(word in text for word in words):
             return True
         if self.countries:
             for name, call in (("spot_from", row["spotter"]),
@@ -2958,7 +3091,9 @@ class App:
                         "comment": "worked", "kind": "worked", "seen": 0,
                         "at": datetime.strptime(q["ts"], "%Y-%m-%d %H:%M:%S")
                         .replace(tzinfo=timezone.utc).timestamp()}
-        for spot in self.cluster.spots(band):
+        # spots of all sources; for a station spotted on several, the newest
+        for spot in sorted(self.cluster.spots(band) + self.web.spots(band),
+                           key=lambda v: v["seen"]):
             entries[spot["call"]] = dict(spot, kind="spot")
         for st in self.log.later_rows(band):
             entries[st["call"]] = dict(st, kind="stored", comment="stored")
@@ -2983,6 +3118,7 @@ class App:
                 at = sum(r["freq_hz"] < here for r in rows)
                 rows.insert(at, {"kind": "here", "call": "", "freq_hz": here,
                                  "time": "", "comment": f"<<< row {self.row}",
+                                 "source": "",
                                  "worked": False, "here": True})
         else:
             rows.sort(key=lambda r: r["seen"], reverse=True)
@@ -2993,6 +3129,7 @@ class App:
                 else " "
             row["text"] = (f"{flag}{row['freq_hz'] / 1000:>{width}.1f} "
                            f"{row['call']:<12} {row['time']:>4} "
+                           f"{row.get('source', ''):<4} "
                            f"{row['comment']}").rstrip()
         return rows
 
@@ -3408,6 +3545,7 @@ class App:
             self.autostart(scr)
         self.rig.start()
         self.cluster.start()
+        self.web.start()
         while True:
             if self.rig.online and self.rig.vfo != self.row:
                 self.row = self.rig.vfo      # A/B was pressed on the radio

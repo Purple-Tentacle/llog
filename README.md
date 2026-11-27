@@ -429,7 +429,8 @@ cluster spots the panel shows:
 | --- | --- |
 | Spotters from | Only spots sent by stations in the named places, for example `EU`: a station spotted from another continent is often not audible here |
 | DX stations from | Only spotted stations in the named places, for example `DL` for WNA and WSA |
-| Comment contains | Only spots whose comment contains the text (upper and lower case do not matter) |
+| POTA spots, SOTA spots | Switch the two extra sources on and off (see below) |
+| Comment contains | Only spots with one of the given words in their comment or source, for example `pota, sota` (several words separated by commas; upper and lower case do not matter) |
 | Worked stations | Hide stations you have already worked (dupes) instead of dimming them; in the band map this also hides the stations from your log |
 | Skimmer spots | Hide automatic spots, recognised by a spotter callsign ending in `-#` |
 | New multipliers only | Only stations that would be a new multiplier |
@@ -445,7 +446,7 @@ country, prefix or `mult_calls` multipliers. In contests whose multipliers
 come from the received exchange, such as DOKs, a spot cannot show them and
 the filter has no effect.
 
-The filters apply to cluster spots. Stations you stored for later are always
+The filters apply to the spots of all sources. Stations you stored for later are always
 shown, except that "Worked stations: hidden" also hides them once worked.
 While entries are hidden, the panel title says how many (`filter: 12
 hidden`). The telnet window always shows everything. Switches in this menu
@@ -453,7 +454,34 @@ leave it open, so several can be set in a row; Esc goes back.
 
 The settings are global, not per contest, and are kept in the `[cluster]`
 section of `config.ini`: `spot_from`, `spot_dx`, `spot_comment`,
-`hide_worked`, `hide_skimmer`, `new_mults_only`.
+`hide_worked`, `hide_skimmer`, `new_mults_only`, `pota`, `sota`.
+
+### POTA and SOTA spots
+
+Besides the DX cluster, the panel can show the spots of Parks on the Air and
+Summits on the Air, taken from the services of the two programmes
+(`api.pota.app` and SOTAwatch, `api2.sota.org.uk`). Both are off by default;
+switch them on in the cluster menu (Alt-M, D, then P or S). llog then fetches
+the current spots once a minute over the internet. No cluster node is needed
+for them.
+
+Every spot in the panel names its source between the age and the comment:
+
+```
+ 14244.0 DL1CR          2m POTA DE-0988 SSB qrv now
+ 14062.0 DL3ABC/P       5m SOTA DM/NS-001 cw cq sota
+ 14025.0 K1ABC          0m DX   CQ TEST
+```
+
+For POTA and SOTA the comment starts with the park or summit reference and
+the mode. A station spotted on several sources is shown once, with its
+newest spot. The filters treat these spots like cluster spots: the source
+counts as part of the comment, so "Comment contains: `pota, sota`" shows
+exactly these two sources (plus cluster spots that mention the words), and
+POTA spots that come from the Reverse Beacon Network count as skimmer
+spots. Spots older than `minutes` are left out, as for the cluster. The
+menu entry shows the number of spots of the last fetch, or why it failed.
+
 
 ### Node settings
 

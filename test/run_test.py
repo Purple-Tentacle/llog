@@ -272,9 +272,9 @@ rig.select("B"); time.sleep(1); assert "V VFOB" in vstate["cmds"]
 app3 = m.App(m.load_config(work, "wsa"), m.Log(os.path.join(work, "c.db")))
 app3.manual_freq["A"] = 14060000
 app3.cluster.feed("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z")
-assert app3.panel_rows()[0]["text"] == " 14025.0 K1ABC          0m CQ TEST"   # age, not the time
+assert app3.panel_rows()[0]["text"] == " 14025.0 K1ABC          0m DX   CQ TEST"   # age, not the time
 app3.cluster._spots[("K1ABC", "20m")]["seen"] -= 754
-assert app3.panel_rows()[0]["text"] == " 14025.0 K1ABC         12m CQ TEST"
+assert app3.panel_rows()[0]["text"] == " 14025.0 K1ABC         12m DX   CQ TEST"
 app3.cluster._spots[("K1ABC", "20m")]["seen"] += 754
 # band map: spots, stored and worked stations by frequency, with our position
 app3.cluster.feed("DX de DL1AAA:     14010.0  W1AW         cq                             2154Z")
@@ -386,8 +386,8 @@ menu("d", "f", "\r"); assert appf.cfg["cluster"]["spot_from"] == "" and "all" in
 menu("d", "d", "dl ea\r"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ"]   # stored EA8ZZ always stays
 menu("d", "d", "\r")
 menu("d", "k"); assert shown() == ["DL5QQ", "EA8ZZ", "K1ABC"] and "Skimmer spots are hidden" in appf.msg
-assert appf.menus[-1]["title"] == "DX cluster" and appf.menus[-1]["index"] == 5
-assert "Skimmer spots: hidden" in appf.menus[-1]["items"][5][1]
+assert appf.menus[-1]["title"] == "DX cluster" and appf.menus[-1]["index"] == 7
+assert "Skimmer spots: hidden" in appf.menus[-1]["items"][7][1]
 appf.key(None, "k"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
 appf.key(None, "h"); assert shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"]          # DL5QQ is in the log
 appf.toggle_view(); assert shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"]; appf.toggle_view()   # band map too
@@ -405,6 +405,59 @@ assert savedf["cluster"]["hide_skimmer"] == "no" and savedf["cluster"]["spot_com
 appf.cfg["contest"]["mult_country"] = "yes"; appf.scoring = m.score_rules(appf.cfg); appf._score = (None, None)   # country multipliers
 menu("d", "n"); assert "no effect" not in appf.msg and shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"]   # DL is worked
 menu("d", "x")
+# POTA and SOTA spots from their own services, marked by source
+import http.server, json
+from datetime import datetime, timezone
+POTA = [{"spotId": 1, "activator": "DL1CR", "frequency": "14244", "mode": "SSB", "reference": "DE-0988",
+         "spotTime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"), "spotter": "DL1CR",
+         "comments": "qrv now", "source": "Web", "name": "Kulturroute"},
+        {"spotId": 2, "activator": "KC5JEC", "frequency": "14074.5", "mode": "FT8", "reference": "US-11782",
+         "spotTime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"), "spotter": "VE7CC-#",
+         "comments": "RBN -10 dB", "source": "RBN"},
+        {"activator": "bad", "frequency": "x"}, {"activator": "DL9OLD", "frequency": "14200", "spotter": "DL1",
+         "spotTime": "2020-01-01T00:00:00"}]
+SOTA = [{"id": 1, "timeStamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.123"),
+         "comments": "cq sota", "callsign": "OK1XX", "associationCode": "DM", "summitCode": "NS-001",
+         "activatorCallsign": "DL3ABC/P", "frequency": "14.062", "mode": "cw"},
+        {"timeStamp": "nonsense", "activatorCallsign": "DL4XX", "frequency": "7.032"}]
+got = m.parse_pota(json.dumps(POTA))
+assert [(x["call"], x["freq_hz"], x["band"], x["comment"], x["skimmer"], x["source"]) for x in got] == [
+    ("DL1CR", 14244000, "20m", "DE-0988 SSB qrv now", False, "POTA"),
+    ("KC5JEC", 14074500, "20m", "US-11782 FT8 RBN -10 dB", True, "POTA"),
+    ("DL9OLD", 14200000, "20m", "", False, "POTA")]
+got = m.parse_sota(json.dumps(SOTA))
+assert [(x["call"], x["freq_hz"], x["comment"], x["spotter"], x["source"]) for x in got] == [
+    ("DL3ABC/P", 14062000, "DM/NS-001 cw cq sota", "OK1XX", "SOTA")]
+class Feeds(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps(POTA if "pota" in self.path else SOTA).encode()
+        if "broken" in self.path: body = b"<html>"
+        self.send_response(200); self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+web = http.server.HTTPServer(("127.0.0.1", 0), Feeds)
+threading.Thread(target=web.serve_forever, daemon=True).start()
+base = f"http://127.0.0.1:{web.server_address[1]}/"
+appf.cfg["cluster"]["pota_url"], appf.cfg["cluster"]["sota_url"] = base + "pota", base + "sota"
+appf.web.fetch("pota"); assert appf.web.status["pota"] == "off" and shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
+menu("d", "p"); assert appf.web.on("pota") and "POTA spots are fetched" in appf.msg
+assert appf.menus[-1]["index"] == 1 and "POTA spots: on, fetching" in appf.menus[-1]["items"][1][1]
+appf.key(None, "s"); appf.menus = []
+appf.web.fetch("pota"); appf.web.fetch("sota")
+assert appf.web.status == {"pota": "3 spots", "sota": "1 spots"}
+assert shown() == ["DL1CR", "DL3ABC/P", "DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC", "KC5JEC"]   # the 2020 spot is too old
+texts = {r["call"]: r["text"] for r in appf.panel_rows()}
+assert texts["DL1CR"] == " 14244.0 DL1CR          0m POTA DE-0988 SSB qrv now"
+assert texts["DL3ABC/P"] == " 14062.0 DL3ABC/P       0m SOTA DM/NS-001 cw cq sota"
+assert texts["K1ABC"] == " 14025.0 K1ABC          0m DX   CQ TEST" and texts["EA8ZZ"].endswith("m      stored")
+menu("d", "c", "pota, sota\r"); assert shown() == ["DL1CR", "DL3ABC/P", "EA8ZZ", "KC5JEC"]   # several words; source counts
+menu("d", "c", "sota\r"); assert shown() == ["DL3ABC/P", "EA8ZZ"]
+menu("d", "c", "\r"); menu("d", "k"); assert "KC5JEC" not in shown() and "EA3ZZ" not in shown()   # RBN spot is a skimmer spot
+appf.key(None, "k"); menu("d", "f", "eu\r"); assert "KC5JEC" not in shown() and "DL3ABC/P" in shown()
+menu("d", "x")
+appf.cfg["cluster"]["sota_url"] = base + "broken"; appf.web.fetch("sota")
+assert appf.web.status["sota"].startswith("failed") and "DL3ABC/P" in shown()   # keeps the last good list
+menu("d", "s"); appf.menus = []; appf.web.fetch("sota"); assert "DL3ABC/P" not in shown()
+menu("d", "p"); appf.menus = []; appf.web.fetch("pota"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
 look = lambda c: (lambda i: i and (i["prefix"], i["cont"], i["cq"]))(cty.lookup(c))
 assert look("DA2IT") == ("DL", "EU", "14") and look("OL5Y") == ("OK", "EU", "15")
 assert look("K7ABC") == ("K", "NA", "3") and look("KH6XX") == ("K", "OC", "31")
@@ -883,7 +936,7 @@ import re; txt = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b" ", screen)
 assert b"NEW MULTIPLIER: O05" in txt and b"Score: 6x1=6" in txt
 assert b"Mults" in txt and b"NOTO" in txt and b"O55" in txt
 assert b"Detect radio and save settings" in txt and b"not set up yet" in txt
-assert b"Newest" in txt and b"K1ABC" in txt and b"0m CQ TEST" in txt
+assert b"Newest" in txt and b"K1ABC" in txt and b"0m DX   CQ TEST" in txt
 assert b"-- Cluster telnet 127.0.0.1 --" in txt and b"--- connected to 127.0.0.1:" in txt
 assert b"Band map 40m" in txt and b"stored" in txt and state["cluster_login"].startswith(b"DA2IT-1\r\n")
 cl = m.Cluster("", 0, "DA2IT")
