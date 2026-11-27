@@ -1219,11 +1219,13 @@ SHDX_RE = re.compile(r"^\s*(\d+\.\d+)\s+([A-Z0-9/]+)\s+"
 class Cluster(threading.Thread):
     """Reads spots from a DX cluster node (telnet) and keeps the recent ones."""
 
-    def __init__(self, host, port, call, minutes=30):
+    def __init__(self, host, port, call, minutes=30, source="DX", enabled=None):
         super().__init__(daemon=True)
         self.host, self.port, self.call = host, port, call
         self.max_age = minutes * 60
-        self.status = "connecting" if host else "off"
+        self.source = source      # shown with each spot: DX, SOTA
+        self.enabled = enabled    # function: is this node switched on?
+        self.status = "connecting" if self.active() else "off"
         self._spots = {}      # (dx call, band) -> spot, newest wins
         self._lock = threading.Lock()
         self._sock = None
@@ -1231,6 +1233,9 @@ class Cluster(threading.Thread):
         # the last lines of the telnet session, for the telnet window
         self.lines = collections.deque(maxlen=300)
         self._sent = (0, "")  # (time, dx call) of the spot we sent last
+
+    def active(self):
+        return bool(self.host) and (self.enabled is None or self.enabled())
 
     def note(self, text):
         """Adds a line to the telnet window (control characters removed)."""
@@ -1267,7 +1272,7 @@ class Cluster(threading.Thread):
         hz = round(float(khz) * 1000)
         spot = {"call": call.upper(), "freq_hz": hz, "band": band_of(hz),
                 "spotter": spotter.rstrip("-#:"), "comment": comment,
-                "skimmer": "#" in spotter, "source": "DX",
+                "skimmer": "#" in spotter, "source": self.source,
                 "time": hhmm, "seen": seen}
         with self._lock:
             old = self._spots.get((spot["call"], spot["band"]))
@@ -1290,6 +1295,8 @@ class Cluster(threading.Thread):
 
     def spots(self, band):
         """Recent spots on one band, newest first."""
+        if self.enabled is not None and not self.enabled():
+            return []
         limit = time.time() - self.max_age
         with self._lock:
             for key in [k for k, v in self._spots.items() if v["seen"] < limit]:
@@ -1299,6 +1306,10 @@ class Cluster(threading.Thread):
 
     def run(self):
         while self.host:
+            if not self.active():            # switched off in the menu
+                self.status = "off"
+                time.sleep(1)
+                continue
             try:
                 self.status = "connecting"
                 with socket.create_connection((self.host, self.port),
@@ -1314,7 +1325,7 @@ class Cluster(threading.Thread):
                             data = b""
                         if not logged_in:       # answer the login prompt once
                             sock.sendall((self.call + "\r\nsh/dx 50\r\n").encode())
-                            sock.settimeout(120)
+                            sock.settimeout(5)
                             self._sock = sock
                             logged_in, self.status = True, "connected"
                             self.note(f"--- connected to {self.host}:{self.port} "
@@ -1323,11 +1334,18 @@ class Cluster(threading.Thread):
                         *lines, buf = buf.split(b"\n")
                         for line in lines:
                             self.feed(line.decode("latin-1"))
+                        if not self.active():
+                            break            # leaves the node
             except OSError as exc:
                 self.status = f"offline: {exc}"
                 self.note(f"--- {self.status}")
             self._sock = None
-            time.sleep(30)
+            for _ in range(30):              # try again in half a minute
+                if not self.active():
+                    with self._lock:
+                        self._spots.clear()
+                    break
+                time.sleep(1)
 
 
 # ------------------------------------------------- POTA and SOTA spots
@@ -1347,12 +1365,22 @@ def _web_spot(source, call, hz, spotter, comment, seen, skimmer=False):
             "seen": seen, "skimmer": skimmer, "source": source}
 
 
+def _entries(text):
+    """The spot entries of a JSON answer: the list itself, or the first list
+    inside an object that wraps it."""
+    data = json.loads(text)
+    if isinstance(data, dict):
+        data = next((v for v in data.values() if isinstance(v, list)), [])
+    return [item for item in data if isinstance(item, dict)] \
+        if isinstance(data, list) else []
+
+
 def parse_pota(text):
     """Spots from the POTA service (api.pota.app/spot/activator): a JSON
     list with activator, frequency in kHz, mode, reference, spotTime (UTC),
     spotter, comments and source."""
     spots = []
-    for item in json.loads(text):
+    for item in _entries(text):
         try:
             spot = _web_spot(
                 "POTA", item.get("activator"),
@@ -1369,40 +1397,17 @@ def parse_pota(text):
     return spots
 
 
-def parse_sota(text):
-    """Spots from SOTAwatch (api-db2.sota.org.uk/api/spots/-1/all): a JSON list
-    with activatorCallsign, frequency in MHz, mode, associationCode and
-    summitCode, timeStamp (UTC), callsign of the spotter and comments."""
-    spots = []
-    for item in json.loads(text):
-        try:
-            freq = float(str(item.get("frequency") or 0).replace(",", "."))
-            hz = round(freq * (1e6 if freq < 1000 else 1e3))   # MHz, or kHz
-            ref = str(item.get("summitCode") or "")
-            if item.get("associationCode") and "/" not in ref:
-                ref = f"{item['associationCode']}/{ref}"
-            spot = _web_spot(
-                "SOTA", item.get("activatorCallsign"), hz, item.get("callsign"),
-                f"{ref} {item.get('mode') or ''} {item.get('comments') or ''}",
-                _utc_seconds(item.get("timeStamp")),
-                "#" in str(item.get("callsign")))
-        except (ValueError, TypeError, AttributeError):
-            continue
-        if spot:
-            spots.append(spot)
-    return spots
-
-
 class WebSpots(threading.Thread):
-    """Fetches the current POTA and SOTA spots from their own services once
-    a minute, for the sources that are switched on."""
-    PARSERS = {"pota": parse_pota, "sota": parse_sota}
+    """Fetches the current POTA spots from the POTA service once a minute
+    while that source is switched on. (SOTA spots come from SOTA's own DX
+    cluster instead: its web API is not open to programs like this one.)"""
+    PARSERS = {"pota": parse_pota}
 
     def __init__(self, cfg, minutes=30, every=60):
         super().__init__(daemon=True)
         self.cfg, self.max_age, self.every = cfg, minutes * 60, every
-        self._spots = {"pota": [], "sota": []}
-        self.status = {"pota": "off", "sota": "off"}
+        self._spots = {"pota": []}
+        self.status = {"pota": "off"}
         self.wake = threading.Event()        # set to fetch right away
 
     def on(self, source):
@@ -1418,22 +1423,30 @@ class WebSpots(threading.Thread):
                 self.cfg["cluster"][source + "_url"].strip(),
                 headers={"User-Agent": "llog contest logger"})
             with urllib.request.urlopen(request, timeout=10) as resp:
-                spots = self.PARSERS[source](resp.read().decode("utf-8", "replace"))
+                text = resp.read().decode("utf-8", "replace")
+            spots, entries = self.PARSERS[source](text), _entries(text)
         except (OSError, ValueError, TypeError, AttributeError) as exc:
             self.status[source] = f"failed: {exc}"
             return
         self._spots[source] = spots
         self.status[source] = f"{len(spots)} spots"
+        if not entries:              # say what came instead of spots
+            self.status[source] = ("0 spots, the service answered: "
+                                   + " ".join(text.split())[:60])
+        elif not spots:
+            self.status[source] = (f"0 spots, {len(entries)} entries not "
+                                   "understood, fields: "
+                                   + " ".join(sorted(entries[0]))[:80])
 
     def spots(self, band):
         limit = time.time() - self.max_age
-        return [spot for source in ("pota", "sota") if self.on(source)
+        return [spot for source in self.PARSERS if self.on(source)
                 for spot in self._spots[source]
                 if spot["band"] == band and spot["seen"] >= limit]
 
     def run(self):
         while True:
-            for source in ("pota", "sota"):
+            for source in self.PARSERS:
                 self.fetch(source)
             self.wake.wait(self.every)
             self.wake.clear()
@@ -1792,8 +1805,8 @@ def load_config(config_dir, contest):
                                "hide_skimmer": "no", "new_mults_only": "no",
                                "pota": "no", "sota": "no",
                                "pota_url": "https://api.pota.app/spot/activator",
-                               "sota_url":
-                                   "https://api-db2.sota.org.uk/api/spots/-1/all"},
+                               "sota_host": "cluster.sota.org.uk",
+                               "sota_port": "7300"},
                    "backup": {"minutes": "5", "keep": "50", "folder": ""},
                    "cw": {"enter_sends": "yes", "cq_pause": "3"},
                    "contest": {"contest": "", "exchange_sent": "",
@@ -1931,6 +1944,12 @@ class App:
         self.partial = PartialCheck(cfg)
         self.countries = load_countries(cfg)     # for the cluster filters
         self.web = WebSpots(cfg, cfg["cluster"].getint("minutes"))
+        # SOTA spots: SOTA's own cluster node, switched in the cluster menu
+        self.sota = Cluster(cfg["cluster"]["sota_host"].strip(),
+                            cfg["cluster"].getint("sota_port"),
+                            self.cluster.call, cfg["cluster"].getint("minutes"),
+                            source="SOTA",
+                            enabled=lambda: self.cluster_flag("sota"))
         self.filtered = 0     # panel entries the cluster filters hide
         self._logged = (None, frozenset())   # (log state, callsigns in the log)
         self.entry = {v: self.new_entry() for v in "AB"}
@@ -2648,8 +2667,8 @@ class App:
                     ("p", "POTA spots: " + ("on, " + self.web.status["pota"]
                                             if self.web.on("pota") else "off")
                           + " (change)", "pota"),
-                    ("s", "SOTA spots: " + ("on, " + self.web.status["sota"]
-                                            if self.web.on("sota") else "off")
+                    ("s", "SOTA spots: " + ("on, " + self.sota.status
+                                            if self.cluster_flag("sota") else "off")
                           + " (change)", "sota"),
                     ("f", f"Spotters from: {some('spot_from')} (change)", "spot_from"),
                     ("d", f"DX stations from: {some('spot_dx')} (change)", "spot_dx"),
@@ -2679,14 +2698,21 @@ class App:
                         "hidden; the list uses the whole panel") + f"{problem}.")
             if new == "yes" and not self.cluster.host:
                 self.msg += " It appears once a cluster node is configured."
-        elif action in ("pota", "sota"):
-            new = "no" if self.web.on(action) else "yes"
-            problem = self.save_setting("cluster", **{action: new})
-            self.web.status[action] = "fetching ..." if new == "yes" else "off"
+        elif action == "pota":
+            new = "no" if self.web.on("pota") else "yes"
+            problem = self.save_setting("cluster", pota=new)
+            self.web.status["pota"] = "fetching ..." if new == "yes" else "off"
             self.web.wake.set()
-            self.msg = (f"{action.upper()} spots are " + (
-                "fetched from the " + action.upper() + " service once a minute"
+            self.msg = ("POTA spots are " + (
+                "fetched from the POTA service once a minute"
                 if new == "yes" else "off") + f"{problem}.")
+        elif action == "sota":
+            new = "no" if self.cluster_flag("sota") else "yes"
+            problem = self.save_setting("cluster", sota=new)
+            self.sota.status = "connecting" if new == "yes" else "off"
+            self.msg = ("SOTA spots " + (
+                f"come from the SOTA cluster {self.sota.host}"
+                if new == "yes" else "are off") + f"{problem}.")
         elif action in ("spot_from", "spot_dx"):
             what = "Spotters" if action == "spot_from" else "DX stations"
 
@@ -3092,7 +3118,8 @@ class App:
                         "at": datetime.strptime(q["ts"], "%Y-%m-%d %H:%M:%S")
                         .replace(tzinfo=timezone.utc).timestamp()}
         # spots of all sources; for a station spotted on several, the newest
-        for spot in sorted(self.cluster.spots(band) + self.web.spots(band),
+        for spot in sorted(self.cluster.spots(band) + self.sota.spots(band)
+                           + self.web.spots(band),
                            key=lambda v: v["seen"]):
             entries[spot["call"]] = dict(spot, kind="spot")
         for st in self.log.later_rows(band):
@@ -3545,6 +3572,7 @@ class App:
             self.autostart(scr)
         self.rig.start()
         self.cluster.start()
+        self.sota.start()
         self.web.start()
         while True:
             if self.rig.online and self.rig.vfo != self.row:

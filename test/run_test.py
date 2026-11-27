@@ -416,34 +416,32 @@ POTA = [{"spotId": 1, "activator": "DL1CR", "frequency": "14244", "mode": "SSB",
          "comments": "RBN -10 dB", "source": "RBN"},
         {"activator": "bad", "frequency": "x"}, {"activator": "DL9OLD", "frequency": "14200", "spotter": "DL1",
          "spotTime": "2020-01-01T00:00:00"}]
-SOTA = [{"id": 1, "timeStamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.123"),
-         "comments": "cq sota", "callsign": "OK1XX", "associationCode": "DM", "summitCode": "NS-001",
-         "activatorCallsign": "DL3ABC/P", "frequency": "14.062", "mode": "cw"},
-        {"timeStamp": "nonsense", "activatorCallsign": "DL4XX", "frequency": "7.032"}]
 got = m.parse_pota(json.dumps(POTA))
 assert [(x["call"], x["freq_hz"], x["band"], x["comment"], x["skimmer"], x["source"]) for x in got] == [
     ("DL1CR", 14244000, "20m", "DE-0988 SSB qrv now", False, "POTA"),
     ("KC5JEC", 14074500, "20m", "US-11782 FT8 RBN -10 dB", True, "POTA"),
     ("DL9OLD", 14200000, "20m", "", False, "POTA")]
-got = m.parse_sota(json.dumps(SOTA))
-assert [(x["call"], x["freq_hz"], x["comment"], x["spotter"], x["source"]) for x in got] == [
-    ("DL3ABC/P", 14062000, "DM/NS-001 cw cq sota", "OK1XX", "SOTA")]
 class Feeds(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = json.dumps(POTA if "pota" in self.path else SOTA).encode()
+        body = json.dumps(POTA).encode()
         if "broken" in self.path: body = b"<html>"
         self.send_response(200); self.end_headers(); self.wfile.write(body)
     def log_message(self, *a): pass
 web = http.server.HTTPServer(("127.0.0.1", 0), Feeds)
 threading.Thread(target=web.serve_forever, daemon=True).start()
 base = f"http://127.0.0.1:{web.server_address[1]}/"
-appf.cfg["cluster"]["pota_url"], appf.cfg["cluster"]["sota_url"] = base + "pota", base + "sota"
+appf.cfg["cluster"]["pota_url"] = base + "pota"
+assert (appf.sota.host, appf.sota.port, appf.sota.source) == ("cluster.sota.org.uk", 7300, "SOTA")
+SOTA_LINE = "DX de OK1XX:      14062.0  DL3ABC/P     DM/NS-001 cw cq sota           1010Z"
+appf.sota.feed(SOTA_LINE); assert not appf.sota.active() and appf.sota.spots("20m") == []   # switched off
 appf.web.fetch("pota"); assert appf.web.status["pota"] == "off" and shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
 menu("d", "p"); assert appf.web.on("pota") and "POTA spots are fetched" in appf.msg
 assert appf.menus[-1]["index"] == 1 and "POTA spots: on, fetching" in appf.menus[-1]["items"][1][1]
-appf.key(None, "s"); appf.menus = []
-appf.web.fetch("pota"); appf.web.fetch("sota")
-assert appf.web.status == {"pota": "3 spots", "sota": "1 spots"}
+appf.key(None, "s"); assert appf.sota.active() and "SOTA cluster cluster.sota.org.uk" in appf.msg
+assert "SOTA spots: on, connecting" in appf.menus[-1]["items"][2][1]; appf.menus = []
+appf.web.fetch("pota"); assert appf.web.status == {"pota": "3 spots"}
+n_tel = len(appf.cluster.lines); appf.sota.feed(SOTA_LINE)
+assert len(appf.cluster.lines) == n_tel               # the SOTA node stays out of the telnet window
 assert shown() == ["DL1CR", "DL3ABC/P", "DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC", "KC5JEC"]   # the 2020 spot is too old
 texts = {r["call"]: r["text"] for r in appf.panel_rows()}
 assert texts["DL1CR"] == " 14244.0 DL1CR          0m POTA DE-0988 SSB qrv now"
@@ -454,9 +452,30 @@ menu("d", "c", "sota\r"); assert shown() == ["DL3ABC/P", "EA8ZZ"]
 menu("d", "c", "\r"); menu("d", "k"); assert "KC5JEC" not in shown() and "EA3ZZ" not in shown()   # RBN spot is a skimmer spot
 appf.key(None, "k"); menu("d", "f", "eu\r"); assert "KC5JEC" not in shown() and "DL3ABC/P" in shown()
 menu("d", "x")
-appf.cfg["cluster"]["sota_url"] = base + "broken"; appf.web.fetch("sota")
-assert appf.web.status["sota"].startswith("failed") and "DL3ABC/P" in shown()   # keeps the last good list
-menu("d", "s"); appf.menus = []; appf.web.fetch("sota"); assert "DL3ABC/P" not in shown()
+appf.cfg["cluster"]["pota_url"] = base + "broken"; appf.web.fetch("pota")
+assert appf.web.status["pota"].startswith("failed") and "DL1CR" in shown()   # keeps the last good list
+appf.cfg["cluster"]["pota_url"] = base + "pota"
+assert m.parse_pota(json.dumps({"total": 1, "spots": POTA}))[0]["call"] == "DL1CR"   # wrapped list
+assert not hasattr(m, "parse_sota") and "sota_url" not in appf.cfg["cluster"]        # no SOTA web API
+assert m._entries("[]") == [] and m._entries('{"error": "x"}') == [] and m._entries('["a"]') == []
+menu("d", "s"); appf.menus = []; assert "DL3ABC/P" not in shown() and "SOTA spots are off" in appf.msg
+# a cluster node that is switched on and off while llog runs (the SOTA node)
+def tiny_node(srv):
+    while True:
+        conn, _ = srv.accept(); conn.sendall(b"login: "); tiny["logins"].append(conn.recv(100))
+        conn.sendall(("Hello\r\n" + SOTA_LINE + "\r\n").encode())
+        while conn.recv(100): pass
+        tiny["closed"] += 1
+tiny = {"logins": [], "closed": 0, "on": False}
+tsrv = socket.socket(); tsrv.bind(("127.0.0.1", 0)); tsrv.listen()
+threading.Thread(target=tiny_node, args=(tsrv,), daemon=True).start()
+node = m.Cluster("127.0.0.1", tsrv.getsockname()[1], "DA2IT", source="SOTA", enabled=lambda: tiny["on"])
+node.start(); time.sleep(1.5); assert node.status == "off" and not tiny["logins"]
+tiny["on"] = True; time.sleep(2.5)
+assert node.status == "connected" and tiny["logins"] == [b"DA2IT\r\nsh/dx 50\r\n"]
+assert [(x["call"], x["source"]) for x in node.spots("20m")] == [("DL3ABC/P", "SOTA")]
+tiny["on"] = False; time.sleep(6.5)
+assert node.status == "off" and tiny["closed"] == 1 and node.spots("20m") == []
 menu("d", "p"); appf.menus = []; appf.web.fetch("pota"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
 look = lambda c: (lambda i: i and (i["prefix"], i["cont"], i["cq"]))(cty.lookup(c))
 assert look("DA2IT") == ("DL", "EU", "14") and look("OL5Y") == ("OK", "EU", "15")

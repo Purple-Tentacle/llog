@@ -459,11 +459,18 @@ section of `config.ini`: `spot_from`, `spot_dx`, `spot_comment`,
 ### POTA and SOTA spots
 
 Besides the DX cluster, the panel can show the spots of Parks on the Air and
-Summits on the Air, taken from the services of the two programmes
-(`api.pota.app` and SOTAwatch, `api-db2.sota.org.uk`). Both are off by default;
-switch them on in the cluster menu (Alt-M, D, then P or S). llog then fetches
-the current spots once a minute over the internet. No cluster node is needed
-for them.
+Summits on the Air. Both are off by default; switch them on in the cluster
+menu (Alt-M, D, then P or S). Neither needs the DX cluster node to be
+configured.
+
+- **POTA** spots come from the POTA service (`api.pota.app`), fetched once a
+  minute over the internet.
+- **SOTA** spots come from SOTA's own DX cluster node,
+  `cluster.sota.org.uk` port 7300, which llog connects to by telnet in
+  addition to your normal node, with the same login callsign. This
+  connection is not shown in the telnet window. llog does not use the SOTA
+  web API: its terms do not allow programs like this one without approval.
+  Another node can be set with `sota_host` and `sota_port` in `[cluster]`.
 
 Every spot in the panel names its source between the age and the comment:
 
@@ -473,15 +480,16 @@ Every spot in the panel names its source between the age and the comment:
  14025.0 K1ABC          0m DX   CQ TEST
 ```
 
-For POTA and SOTA the comment starts with the park or summit reference and
-the mode. A station spotted on several sources is shown once, with its
-newest spot. The filters treat these spots like cluster spots: the source
-counts as part of the comment, so "Comment contains: `pota, sota`" shows
-exactly these two sources (plus cluster spots that mention the words), and
-POTA spots that come from the Reverse Beacon Network count as skimmer
-spots. Spots older than `minutes` are left out, as for the cluster. The
-menu entry shows the number of spots of the last fetch, or why it failed.
-
+For POTA the comment starts with the park reference and the mode; for SOTA
+it is the comment of the spot as the SOTA node sends it. A station spotted on
+several sources is shown once, with its newest spot. The filters treat these
+spots like cluster spots: the source counts as part of the comment, so
+"Comment contains: `pota, sota`" shows exactly these two sources (plus
+cluster spots that mention the words), and POTA spots that come from the
+Reverse Beacon Network count as skimmer spots. Spots older than `minutes`
+are left out, as for the cluster. The menu entries show the state: the
+number of POTA spots of the last fetch or why it failed, and whether the
+SOTA node is connected.
 
 ### Node settings
 
