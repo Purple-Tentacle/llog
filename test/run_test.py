@@ -485,7 +485,8 @@ node.relogin("DA2IT-2"); time.sleep(7)                        # new login: out a
 assert node.status == "connected" and tiny["logins"][-1] == b"DA2IT-2\r\nsh/dx 50\r\n" and tiny["closed"] == 2
 assert tiny["bye"] == [b"bye\r\n"] * 2
 # the logins are set in the cluster menu
-menu("d", "l", "da2it-3\r"); assert appf.cluster.call == "DA2IT-3" and appf.sota.call == "DA2IT-3"
+assert (appf.cluster.call, appf.sota.call) == ("DA2IT-1", "DA2IT")   # independent of each other
+menu("d", "l", "da2it-3\r"); assert appf.cluster.call == "DA2IT-3" and appf.sota.call == "DA2IT"
 assert appf.cfg["cluster"]["call"] == "DA2IT-3" and "DX node login is now DA2IT-3" in appf.msg
 menu("d", "o", "da2it-4\r"); assert (appf.cluster.call, appf.sota.call) == ("DA2IT-3", "DA2IT-4")
 menu("d", "l", "bad call!\r"); assert "not changed" in appf.msg and appf.cluster.call == "DA2IT-3"

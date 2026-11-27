@@ -468,8 +468,8 @@ with the new login.
 This helps when a node still holds an old session of yours, for example
 after the computer crashed, and answers the login with "Another session
 ...": log in with another number. It also lets you use different logins at
-the two nodes. An empty entry gives the DX node your station callsign, and
-the SOTA node the same login as the DX node. The logins are kept in
+the two nodes: the two logins are independent of each other. An empty entry
+means your station callsign. The logins are kept in
 `config.ini` as `call` and `sota_call` in `[cluster]`.
 
 When llog quits, it logs out of the nodes with their `bye` command.
@@ -485,7 +485,8 @@ configured.
   minute over the internet.
 - **SOTA** spots come from SOTA's own DX cluster node,
   `cluster.sota.org.uk` port 7300, which llog connects to by telnet in
-  addition to your normal node, with the same login callsign. This
+  addition to your normal node, with your station callsign unless you set
+  another login. This
   connection is not shown in the telnet window. llog does not use the SOTA
   web API: its terms do not allow programs like this one without approval.
   Another node can be set with `sota_host` and `sota_port` in `[cluster]`.

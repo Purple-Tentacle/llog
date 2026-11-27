@@ -1978,7 +1978,7 @@ class App:
         self.sota = Cluster(cfg["cluster"]["sota_host"].strip(),
                             cfg["cluster"].getint("sota_port"),
                             cfg["cluster"]["sota_call"].strip().upper()
-                            or self.cluster.call,
+                            or self.mycall,
                             cfg["cluster"].getint("minutes"), source="SOTA",
                             enabled=lambda: self.cluster_flag("sota"))
         self.filtered = 0     # panel entries the cluster filters hide
@@ -2765,9 +2765,7 @@ class App:
             node = self.cluster if action == "login" else self.sota
             name = "DX" if action == "login" else "SOTA"
             key = "call" if action == "login" else "sota_call"
-            # empty: the DX node gets the station callsign, the SOTA node
-            # the same login as the DX node
-            usual = self.mycall if action == "login" else self.cluster.call
+            usual = self.mycall          # an empty entry: the station callsign
 
             def save(value, node=node, name=name, key=key, usual=usual):
                 call = value.strip().upper()
@@ -2777,9 +2775,6 @@ class App:
                     return
                 problem = self.save_setting("cluster", **{key: call})
                 node.relogin(call or usual)
-                if action == "login" and not self.cfg["cluster"].get(
-                        "sota_call", "").strip():
-                    self.sota.relogin(node.call)     # it follows the DX login
                 self.msg = (f"{name} node login is now {node.call}{problem}."
                             + (" Connecting again ..." if node.active() else ""))
             self.prompt = {"text": f"Login callsign at the {name} node, e.g. "
