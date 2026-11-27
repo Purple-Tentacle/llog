@@ -419,6 +419,18 @@ The panel needs a terminal at least 142 columns wide; on narrower terminals
 it is hidden. It works without a cluster node too, with stored and worked
 stations only.
 
+### Contests entered as non-assisted
+
+Many contests have a category without "QSO finding assistance", which rules
+out the DX cluster and every other source of spots. When the contest file
+says `category_assisted = NON-ASSISTED`, llog switches all of it off for that
+contest: it does not connect to the cluster node or the SOTA node, fetches no
+POTA spots, shows no telnet window, and Alt-S sends no spot. The panel says
+so and still shows your own entries: stations stored for later and, in the
+band map, the stations in your log. Nothing in `config.ini` is changed, so
+other contests use the cluster as before. Check partial, the country file
+and the QRZ lookup are not affected.
+
 ### Cluster menu and filters
 
 Alt-M, then D opens the cluster menu. It shows the node and its state, has

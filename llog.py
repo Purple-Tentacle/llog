@@ -1462,9 +1462,11 @@ class WebSpots(threading.Thread):
         self.status = {"pota": "off"}
         self.wake = threading.Event()        # set to fetch right away
 
+    blocked = False       # NON-ASSISTED contest entry: nothing is fetched
+
     def on(self, source):
-        return self.cfg["cluster"].get(source, "no").strip().lower() in (
-            "yes", "true", "on", "1")
+        return not self.blocked and self.cfg["cluster"].get(
+            source, "no").strip().lower() in ("yes", "true", "on", "1")
 
     def fetch(self, source):
         if not self.on(source):
@@ -1994,11 +1996,15 @@ class App:
                        retune=rig_retune(cfg))
         self.qrz = Qrz(os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
                        os.environ.get("QRZ_PASSWORD", cfg["qrz"]["password"]))
+        # a contest entered as NON-ASSISTED: no cluster, no spots of any kind
+        self.unassisted = "NON" in cfg["contest"].get(
+            "category_assisted", "").upper()
         self.cluster = Cluster(cfg["cluster"]["host"].strip(),
                                cfg["cluster"].getint("port"),
                                cfg["cluster"]["call"].strip().upper()
                                or self.mycall,
-                               cfg["cluster"].getint("minutes"))
+                               cfg["cluster"].getint("minutes"),
+                               enabled=lambda: not self.unassisted)
         # one entry row per VFO
         self.my_loc = my_locator(cfg)
         self.forced_mode = cfg["contest"].get("mode", "").strip().upper()
@@ -2012,7 +2018,9 @@ class App:
                             cfg["cluster"]["sota_call"].strip().upper()
                             or self.mycall,
                             cfg["cluster"].getint("minutes"), source="SOTA",
-                            enabled=lambda: self.cluster_flag("sota"))
+                            enabled=lambda: self.cluster_flag("sota")
+                            and not self.unassisted)
+        self.web.blocked = self.unassisted
         self.filtered = 0     # panel entries the cluster filters hide
         self._logged = (None, frozenset())   # (log state, callsigns in the log)
         self.entry = {v: self.new_entry() for v in "AB"}
@@ -2718,7 +2726,11 @@ class App:
         show = lambda name: "hidden" if self.cluster_flag(name) else "shown"
         some = lambda name: " ".join(sorted(self.place_list(name))) or "all"
         return {"title": "DX cluster", "index": index,
-                "info": ["Node: " + (f"{self.cluster.host}:{self.cluster.port}, "
+                "info": (["OFF for this contest: category_assisted = "
+                          "NON-ASSISTED in the contest file.",
+                          "No cluster, SOTA or POTA spots are fetched or shown."]
+                         if self.unassisted else []) +
+                        ["Node: " + (f"{self.cluster.host}:{self.cluster.port}, "
                                      f"{self.cluster.status}"
                                      if self.cluster.host else "none configured"),
                          "Filters apply to spots of all sources, not to stored "
@@ -2728,7 +2740,7 @@ class App:
                           f"{'shown' if self.telnet_window() else 'hidden'} (change)",
                      "telnet_window"),
                     ("p", "POTA spots: " + ("on, " + self.web.status["pota"]
-                                            if self.web.on("pota") else "off")
+                                            if self.cluster_flag("pota") else "off")
                           + " (change)", "pota"),
                     ("s", "SOTA spots: " + ("on, " + self.sota.status
                                             if self.cluster_flag("sota") else "off")
@@ -2770,7 +2782,7 @@ class App:
             if new == "yes" and not self.cluster.host:
                 self.msg += " It appears once a cluster node is configured."
         elif action == "pota":
-            new = "no" if self.web.on("pota") else "yes"
+            new = "no" if self.cluster_flag("pota") else "yes"
             problem = self.save_setting("cluster", pota=new)
             self.web.status["pota"] = "fetching ..." if new == "yes" else "off"
             self.web.wake.set()
@@ -2859,6 +2871,9 @@ class App:
                     and not self.call_mults()):
                 self.msg += (" This contest's multipliers come from the "
                              "exchange, so a spot cannot show them: no effect.")
+        if self.unassisted and action in ("pota", "sota"):
+            self.msg = (f"Saved{problem}, but no spots are fetched in this "
+                        "contest: it is entered NON-ASSISTED.")
         if reopen:
             self.menus = [self.main_menu(), self.cluster_menu(index)]
             self.menus[0]["index"] = 7           # Esc returns to "DX cluster"
@@ -3337,6 +3352,10 @@ class App:
         if not hz:
             self.msg = "No frequency for the spot."
             return
+        if self.unassisted:
+            self.msg = ("The DX cluster is off: this contest is entered "
+                        "NON-ASSISTED.")
+            return
         if self.cluster.status != "connected":
             self.msg = "DX cluster is not connected."
             return
@@ -3461,7 +3480,11 @@ class App:
                 + (f"  filter: {self.filtered} hidden" if self.filtered else ""),
                 curses.A_BOLD)
             line = 3
-            if self.cluster.host and self.cluster.status != "connected":
+            if self.unassisted:
+                put(line, panel_x + 1,
+                    "no spots: NON-ASSISTED contest entry"[:panel_w - 3])
+                line += 1
+            elif self.cluster.host and self.cluster.status != "connected":
                 put(line, panel_x + 1,
                     f"cluster {self.cluster.status}"[:panel_w - 3])
                 line += 1
@@ -3471,7 +3494,7 @@ class App:
             # the telnet window: bottom right, from the height of the
             # multiplier line down to the message line; the list ends above it
             tel_top = h - 9 - extra - len(mult_rows)
-            telnet = (self.telnet_window() and bool(self.cluster.host)
+            telnet = (self.telnet_window() and self.cluster.active()
                       and tel_top - line >= 6)
             room = max((tel_top if telnet else h - 3) - line, 1)
             if telnet:

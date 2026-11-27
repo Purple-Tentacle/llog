@@ -574,6 +574,25 @@ appw.cluster.feed("DX de DL1AAA:     14026.0  OK2XX        CQ                   
 appw.cfg["cluster"]["new_mults_only"] = "yes"; appw.val["call"] = ""
 assert [x["call"] for x in appw.panel_rows()] == ["OK2XX"]         # N2XX: country K and zone 5 are worked
 appw.cfg["cluster"]["new_mults_only"] = "no"
+# NON-ASSISTED in the contest file: no cluster, SOTA or POTA spots at all
+cwn = m.load_config(work, os.path.join(EX, "cq-ww-cw.ini")); cwn["contest"]["category_assisted"] = "non-assisted"
+cwn["cluster"]["pota"] = cwn["cluster"]["sota"] = "yes"
+appn = m.App(cwn, m.Log(os.path.join(work, "cqwwn.db"))); appn.manual_freq["A"] = 14012000
+assert appn.unassisted and not appn.cluster.active() and not appn.sota.active() and not appn.web.on("pota")
+appn.cluster.feed("DX de DL1AAA:     14026.0  OK2XX        CQ                             2153Z")
+appn.sota.feed("DX de DL1AAA:     14027.0  OK3XX        CQ                             2153Z")
+appn.web._spots["pota"] = m.parse_pota(json.dumps(POTA)); appn.web.fetch("pota")
+assert appn.panel_rows() == [] and appn.web.status["pota"] == "off" and appn.web._spots["pota"] == []
+appn.val["call"] = "OK2XX"; appn.spot_send(); assert "NON-ASSISTED" in appn.msg and not appn.prompt
+appn.val["call"] = "OK9ST"; appn.store_for_later(); assert [x["call"] for x in appn.panel_rows()] == ["OK9ST"]  # own notes stay
+appn.menus = [appn.main_menu()]; appn.menu_key("d"); assert "NON-ASSISTED" in appn.menus[-1]["info"][0]
+appn.menu_key("p"); assert "NON-ASSISTED" in appn.msg and appn.cfg["cluster"]["pota"] == "no"; appn.menus = []
+drawn = []; appn.warn_attr = appn.good_attr = 0
+appn.draw(type("S", (), {"erase": lambda s: None, "getmaxyx": lambda s: (40, 203),
+    "addstr": lambda s, y, x, t, a=0: drawn.append(t), "move": lambda s, *a: None,
+    "refresh": lambda s: None})())
+assert any("no spots: NON-ASSISTED" in t for t in drawn) and not any("Cluster telnet" in t for t in drawn)
+assert not appw.unassisted and appw.cluster.active()
 cabw = os.path.join(work, "cqww.cbr"); appw.log.export_cabrillo(cabw, cw); cabw = open(cabw).read()
 assert cabw.splitlines()[1:5] == ["CONTEST: CQ-WW-CW", "CALLSIGN: DA2IT", "LOCATION: DX", "CATEGORY-OPERATOR: SINGLE-OP"]
 assert "CATEGORY-ASSISTED: ASSISTED" in cabw and "CATEGORY-BAND: ALL" in cabw and "CATEGORY-MODE: CW" in cabw
