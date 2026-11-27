@@ -1370,7 +1370,7 @@ def parse_pota(text):
 
 
 def parse_sota(text):
-    """Spots from SOTAwatch (api2.sota.org.uk/api/spots/...): a JSON list
+    """Spots from SOTAwatch (api-db2.sota.org.uk/api/spots/-1/all): a JSON list
     with activatorCallsign, frequency in MHz, mode, associationCode and
     summitCode, timeStamp (UTC), callsign of the spotter and comments."""
     spots = []
@@ -1793,7 +1793,7 @@ def load_config(config_dir, contest):
                                "pota": "no", "sota": "no",
                                "pota_url": "https://api.pota.app/spot/activator",
                                "sota_url":
-                                   "https://api2.sota.org.uk/api/spots/50/all"},
+                                   "https://api-db2.sota.org.uk/api/spots/-1/all"},
                    "backup": {"minutes": "5", "keep": "50", "folder": ""},
                    "cw": {"enter_sends": "yes", "cq_pause": "3"},
                    "contest": {"contest": "", "exchange_sent": "",

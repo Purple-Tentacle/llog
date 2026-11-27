@@ -460,7 +460,7 @@ section of `config.ini`: `spot_from`, `spot_dx`, `spot_comment`,
 
 Besides the DX cluster, the panel can show the spots of Parks on the Air and
 Summits on the Air, taken from the services of the two programmes
-(`api.pota.app` and SOTAwatch, `api2.sota.org.uk`). Both are off by default;
+(`api.pota.app` and SOTAwatch, `api-db2.sota.org.uk`). Both are off by default;
 switch them on in the cluster menu (Alt-M, D, then P or S). llog then fetches
 the current spots once a minute over the internet. No cluster node is needed
 for them.
