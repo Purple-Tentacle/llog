@@ -392,7 +392,7 @@ appf.key(None, "k"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
 appf.key(None, "h"); assert shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"]          # DL5QQ is in the log
 appf.toggle_view(); assert shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"]; appf.toggle_view()   # band map too
 appf.key(None, "h")
-menu("d", "c", "cq test\r"); assert shown() == ["EA8ZZ", "K1ABC"] and appf.filtered == 2
+menu("d", "c", "cq\r"); assert shown() == ["EA8ZZ", "K1ABC"] and appf.filtered == 2
 drawn = []; appf.menus = []; appf.warn_attr = appf.good_attr = 0
 appf.draw(type("S", (), {"erase": lambda s: None, "getmaxyx": lambda s: (40, 203),
     "addstr": lambda s, y, x, t, a=0: drawn.append(t), "move": lambda s, *a: None,
@@ -448,6 +448,8 @@ assert texts["DL1CR"] == " 14244.0 DL1CR          0m POTA DE-0988 SSB qrv now"
 assert texts["DL3ABC/P"] == " 14062.0 DL3ABC/P       0m SOTA DM/NS-001 cw cq sota"
 assert texts["K1ABC"] == " 14025.0 K1ABC          0m DX   CQ TEST" and texts["EA8ZZ"].endswith("m      stored")
 menu("d", "c", "pota, sota\r"); assert shown() == ["DL1CR", "DL3ABC/P", "EA8ZZ", "KC5JEC"]   # several words; source counts
+menu("d", "c", "sota pota\r"); assert shown() == ["DL1CR", "DL3ABC/P", "EA8ZZ", "KC5JEC"]   # spaces work too
+assert appf.cfg["cluster"]["spot_comment"] == "sota pota" and "one of: sota pota" in appf.msg
 menu("d", "c", "sota\r"); assert shown() == ["DL3ABC/P", "EA8ZZ"]
 menu("d", "c", "\r"); menu("d", "k"); assert "KC5JEC" not in shown() and "EA3ZZ" not in shown()   # RBN spot is a skimmer spot
 appf.key(None, "k"); menu("d", "f", "eu\r"); assert "KC5JEC" not in shown() and "DL3ABC/P" in shown()

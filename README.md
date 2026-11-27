@@ -430,7 +430,7 @@ cluster spots the panel shows:
 | Spotters from | Only spots sent by stations in the named places, for example `EU`: a station spotted from another continent is often not audible here |
 | DX stations from | Only spotted stations in the named places, for example `DL` for WNA and WSA |
 | POTA spots, SOTA spots | Switch the two extra sources on and off (see below) |
-| Comment contains | Only spots with one of the given words in their comment or source, for example `pota, sota` (several words separated by commas; upper and lower case do not matter) |
+| Comment contains | Only spots with one of the given words in their comment or source, for example `pota sota` (several words separated by spaces or commas; upper and lower case do not matter) |
 | Worked stations | Hide stations you have already worked (dupes) instead of dimming them; in the band map this also hides the stations from your log |
 | Skimmer spots | Hide automatic spots, recognised by a spotter callsign ending in `-#` |
 | New multipliers only | Only stations that would be a new multiplier |
@@ -484,7 +484,7 @@ For POTA the comment starts with the park reference and the mode; for SOTA
 it is the comment of the spot as the SOTA node sends it. A station spotted on
 several sources is shown once, with its newest spot. The filters treat these
 spots like cluster spots: the source counts as part of the comment, so
-"Comment contains: `pota, sota`" shows exactly these two sources (plus
+"Comment contains: `pota sota`" shows exactly these two sources (plus
 cluster spots that mention the words), and POTA spots that come from the
 Reverse Beacon Network count as skimmer spots. Spots older than `minutes`
 are left out, as for the cluster. The menu entries show the state: the
