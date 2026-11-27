@@ -2149,19 +2149,28 @@ class App:
         self.entry[self.row] = self.new_entry()
 
     def sync_prefill(self):
-        """Fills the locator field from the QRZ lookup. A locator that was
+        """Fills the locator field from the QRZ lookup, or from the
+        worked-before file as long as QRZ gives none. A locator that was
         typed or emptied by hand is never overwritten."""
         for entry in self.entry.values():
             val, call = entry["val"], entry["val"]["call"]
             if entry["auto"].get("loc") not in (None, call):
                 val["loc"] = ""                 # belonged to another callsign
                 del entry["auto"]["loc"]
-            if (val["loc"] or not is_call(call)
-                    or entry["manual"].get("loc") == call):
+            if not is_call(call) or entry["manual"].get("loc") == call:
                 continue
             grid = (self.qrz.info(call) or {}).get("grid", "")
             if is_locator(grid):
-                val["loc"], entry["auto"]["loc"] = grid.upper()[:8], call
+                # QRZ also replaces a locator taken from the file meanwhile
+                if not val["loc"] or (entry["auto"].get("loc") == call
+                                      and entry.get("loc_from") == "history"):
+                    val["loc"], entry["auto"]["loc"] = grid.upper()[:8], call
+                    entry["loc_from"] = "qrz"
+            elif not val["loc"]:
+                known = (self.history.lookup(call) or {}).get("loc", "")
+                if is_locator(known):
+                    val["loc"], entry["auto"]["loc"] = known.upper()[:8], call
+                    entry["loc_from"] = "history"
         if self.prefill:
             # the same for the received exchange (exchange_prefill)
             for entry in self.entry.values():

@@ -992,7 +992,13 @@ The suggestion is only that. A station may have a new DOK, large countries
 span several zones, and what counts is what the station sends. To correct
 it, go to the exchange field and type: the first key replaces the
 suggestion. An exchange you typed or emptied yourself is not touched again.
-The same applies to a locator that came from the QRZ lookup.
+The same applies to a suggested locator.
+
+**Locator.** The locator field is filled from the QRZ lookup. As long as QRZ
+gives none (no lookup yet, no locator on file there, or QRZ switched off as in
+a NON-ASSISTED contest), llog uses the locator of the station's last QSO in
+the worked-before file. When QRZ answers later with a locator, that one
+replaces the one from the file, unless you have typed in the field.
 
 **Contests with a running number.** When your own exchange contains `#`,
 the others send a number too, which is new in every QSO. llog then suggests

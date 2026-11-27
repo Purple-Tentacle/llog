@@ -620,6 +620,22 @@ apph.focus = EXZ; typeh("N"); assert apph.val["exch"] == "N"; typeh("07"); apph.
 apph.manual_freq["A"] = 432200000; typeh("DL1HIS/P"); assert apph.val["exch"] == "N07"   # this log goes first, /P ignored
 apph.clear(); typeh("DL2NUM"); assert apph.val["exch"] == "017"; apph.clear()
 typeh("DL9NEW"); assert apph.val["exch"] == ""; apph.clear()
+# the locator comes from the worked-before file as long as QRZ gives none
+open(hadi, "a").write("<CALL:6>DL3LOC<QSO_DATE:8>20260102<GRIDSQUARE:6>jo40aa<EOR>")
+ch["contest"]["exchange_sent"] = "N99"
+appl = m.App(ch, m.Log(os.path.join(work, "prefill2.db"))); appl.manual_freq["A"] = 144300000
+def typel(text):
+    for c in text: appl.entry_key(c)
+    appl.sync_prefill()
+typel("DL3LOC"); assert appl.val["loc"] == "JO40AA" and appl.entry["A"]["loc_from"] == "history"
+appl.qrz.cache["DL3LOC"] = {"name": "", "qth": "", "country": "", "grid": "JO41BB"}; appl.sync_prefill()
+assert appl.val["loc"] == "JO41BB" and appl.entry["A"]["loc_from"] == "qrz"      # QRZ answered: its locator
+appl.clear(); typel("DL3LOC"); assert appl.val["loc"] == "JO41BB"; appl.clear()
+appl.qrz.cache["DL3LOC"] = {"name": "X", "qth": "", "country": "", "grid": ""}
+typel("DL3LOC"); assert appl.val["loc"] == "JO40AA"                              # QRZ has none: the file
+appl.focus = m.FIELDS.index("loc"); typel("J"); assert appl.val["loc"] == "J"    # typing replaces it
+appl.qrz.cache["DL3LOC"]["grid"] = "JO41BB"; appl.sync_prefill(); assert appl.val["loc"] == "J"   # and stays
+appl.clear(); typel("DL1HIS"); assert appl.val["loc"] == ""; appl.clear()        # no locator in the file
 # with a running number in the exchange only the fixed part is suggested, the number is typed behind it
 ch["contest"]["exchange_sent"] = "# N99"
 typeh("DL2NUM"); assert apph.val["exch"] == ""; apph.clear()                         # a number only: nothing
