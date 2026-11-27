@@ -434,6 +434,7 @@ cluster spots the panel shows:
 | Worked stations | Hide stations you have already worked (dupes) instead of dimming them; in the band map this also hides the stations from your log |
 | Skimmer spots | Hide automatic spots, recognised by a spotter callsign ending in `-#` |
 | New multipliers only | Only stations that would be a new multiplier |
+| Login at the DX node, Login at the SOTA node | The callsign llog logs in with, see below |
 | Clear all filters | Switches every filter off |
 
 Places are continents (`EU NA SA AS AF OC`) and country prefixes as the
@@ -455,6 +456,23 @@ leave it open, so several can be set in a row; Esc goes back.
 The settings are global, not per contest, and are kept in the `[cluster]`
 section of `config.ini`: `spot_from`, `spot_dx`, `spot_comment`,
 `hide_worked`, `hide_skimmer`, `new_mults_only`, `pota`, `sota`.
+
+### Login callsigns
+
+"Login at the DX node" (Alt-M, D, then L) sets the callsign llog uses at your
+cluster node, and "Login at the SOTA node" (O) the one for the SOTA node. A
+login is a callsign, optionally with a number from -1 to -15, such as
+`DA2IT-2`. After a change llog leaves the node and connects again at once
+with the new login.
+
+This helps when a node still holds an old session of yours, for example
+after the computer crashed, and answers the login with "Another session
+...": log in with another number. It also lets you use different logins at
+the two nodes. An empty entry gives the DX node your station callsign, and
+the SOTA node the same login as the DX node. The logins are kept in
+`config.ini` as `call` and `sota_call` in `[cluster]`.
+
+When llog quits, it logs out of the nodes with their `bye` command.
 
 ### POTA and SOTA spots
 

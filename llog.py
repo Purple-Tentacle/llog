@@ -1235,6 +1235,11 @@ class Cluster(threading.Thread):
         self._sent = (0, "")  # (time, dx call) of the spot we sent last
 
     closing = False       # llog is quitting: no reconnect
+    restart = False       # connect again now (the login was changed)
+
+    def relogin(self, call):
+        """Leaves the node and connects again with another login callsign."""
+        self.call, self.restart = call, True
 
     def active(self):
         return (bool(self.host) and not self.closing
@@ -1331,7 +1336,7 @@ class Cluster(threading.Thread):
                 time.sleep(1)
                 continue
             try:
-                self.status = "connecting"
+                self.status, self.restart = "connecting", False
                 with socket.create_connection((self.host, self.port),
                                               timeout=10) as sock:
                     sock.settimeout(3)
@@ -1354,8 +1359,8 @@ class Cluster(threading.Thread):
                         *lines, buf = buf.split(b"\n")
                         for line in lines:
                             self.feed(line.decode("latin-1"))
-                        if not self.active():
-                            if not self.closing:     # switched off in the menu
+                        if not self.active() or self.restart:
+                            if not self.closing:     # switched off, or new login
                                 self._logout(sock)
                             break
             except OSError as exc:
@@ -1363,6 +1368,8 @@ class Cluster(threading.Thread):
                 self.note(f"--- {self.status}")
             self._sock = None
             for _ in range(30):              # try again in half a minute
+                if self.restart:
+                    break
                 if not self.active():
                     with self._lock:
                         self._spots.clear()
@@ -1828,6 +1835,7 @@ def load_config(config_dir, contest):
                                "pota": "no", "sota": "no",
                                "pota_url": "https://api.pota.app/spot/activator",
                                "sota_host": "cluster.sota.org.uk",
+                               "sota_call": "",
                                "sota_port": "7300"},
                    "backup": {"minutes": "5", "keep": "50", "folder": ""},
                    "cw": {"enter_sends": "yes", "cq_pause": "3"},
@@ -1969,8 +1977,9 @@ class App:
         # SOTA spots: SOTA's own cluster node, switched in the cluster menu
         self.sota = Cluster(cfg["cluster"]["sota_host"].strip(),
                             cfg["cluster"].getint("sota_port"),
-                            self.cluster.call, cfg["cluster"].getint("minutes"),
-                            source="SOTA",
+                            cfg["cluster"]["sota_call"].strip().upper()
+                            or self.cluster.call,
+                            cfg["cluster"].getint("minutes"), source="SOTA",
                             enabled=lambda: self.cluster_flag("sota"))
         self.filtered = 0     # panel entries the cluster filters hide
         self._logged = (None, frozenset())   # (log state, callsigns in the log)
@@ -2704,11 +2713,15 @@ class App:
                     ("n", "New multipliers only: "
                           f"{'yes' if self.cluster_flag('new_mults_only') else 'no'} "
                           "(change)", "new_mults_only"),
+                    ("l", f"Login at the DX node: {self.cluster.call} (change)",
+                     "login"),
+                    ("o", f"Login at the SOTA node: {self.sota.call} (change)",
+                     "sota_login"),
                     ("x", "Clear all filters", "filters_off")]}
 
     CLUSTER_ACTIONS = ("telnet_window", "pota", "sota", "spot_from", "spot_dx", "spot_comment",
                        "hide_worked", "hide_skimmer", "new_mults_only",
-                       "filters_off")
+                       "login", "sota_login", "filters_off")
 
     def cluster_action(self, action):
         index = self.CLUSTER_ACTIONS.index(action)
@@ -2747,6 +2760,31 @@ class App:
             self.prompt = {"text": f"{what} from - continents (EU NA SA AS AF OC) "
                                    "and/or country prefixes (DL OK G), empty = "
                                    "all: ", "value": "", "action": save}
+            reopen = False
+        elif action in ("login", "sota_login"):
+            node = self.cluster if action == "login" else self.sota
+            name = "DX" if action == "login" else "SOTA"
+            key = "call" if action == "login" else "sota_call"
+            # empty: the DX node gets the station callsign, the SOTA node
+            # the same login as the DX node
+            usual = self.mycall if action == "login" else self.cluster.call
+
+            def save(value, node=node, name=name, key=key, usual=usual):
+                call = value.strip().upper()
+                if call and not re.fullmatch(r"[A-Z0-9/]+(-\d{1,2})?", call):
+                    self.msg = ("Login not changed: a callsign, optionally with "
+                                "-1 to -15, e.g. DA2IT-2.")
+                    return
+                problem = self.save_setting("cluster", **{key: call})
+                node.relogin(call or usual)
+                if action == "login" and not self.cfg["cluster"].get(
+                        "sota_call", "").strip():
+                    self.sota.relogin(node.call)     # it follows the DX login
+                self.msg = (f"{name} node login is now {node.call}{problem}."
+                            + (" Connecting again ..." if node.active() else ""))
+            self.prompt = {"text": f"Login callsign at the {name} node, e.g. "
+                                   f"{self.mycall}-2 (now {node.call}; empty = "
+                                   f"{usual}): ", "value": "", "action": save}
             reopen = False
         elif action == "spot_comment":
             def save(value):
