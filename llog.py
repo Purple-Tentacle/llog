@@ -2733,8 +2733,8 @@ class App:
                             f"'{value.strip()}'{problem}." if value.strip() else
                             f"Comment filter off{problem}.")
             self.prompt = {"text": "Show only spots with one of these words in "
-                                   "the source or comment, e.g. pota, sota "
-                                   "(empty = all): ", "value": "", "action": save}
+                                   "the source or comment, separated by commas, "
+                                   "e.g. pota, sota (empty = all): ", "value": "", "action": save}
             reopen = False
         elif action == "filters_off":
             problem = self.save_setting(
