@@ -668,6 +668,13 @@ appr.rig.mode["A"] = "CW"; appr.esm_mode = "sp"; appr.key(None, F11)
 assert not appr.cq_auto and "Run only" in appr.msg and len(sent_cw) == 4
 assert not any("F11" in text for text, _ in appr.key_line()[0])
 appr.esm_mode = "run"; appr.save_setting("cw", cq_pause="3")
+# the telnet window of the cluster panel is switched in the menu and kept
+assert appr.telnet_window(); appr.menus = [appr.main_menu()]
+assert appr.menus[0]["items"][7][1] == "Cluster telnet window: shown (change)"
+appr.menu_key("w"); assert not appr.telnet_window() and "hidden" in appr.msg
+saved.read(os.path.join(cdir, "config.ini")); assert saved["cluster"]["telnet_window"] == "no"
+appr.menus = [appr.main_menu()]; assert "hidden" in appr.menus[0]["items"][7][1]
+appr.menu_key("w"); assert appr.telnet_window()
 # voice memories in SSB: F1 = memory 1 (Run), F4 = memory 2
 voiced = []; appr.rig.mode["A"] = "USB"
 def fake_voice(n): voiced.append(n); appr.rig.voice_busy = True

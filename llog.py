@@ -1675,7 +1675,7 @@ def load_config(config_dir, contest):
                            "rigctld_options": "", "rigctld_autostart": "no",
                            "rigctld_command": "rigctld"},
                    "cluster": {"host": "", "port": "7300", "minutes": "30",
-                               "call": ""},
+                               "call": "", "telnet_window": "yes"},
                    "backup": {"minutes": "5", "keep": "50", "folder": ""},
                    "cw": {"enter_sends": "yes", "cq_pause": "3"},
                    "contest": {"contest": "", "exchange_sent": "",
@@ -2482,6 +2482,9 @@ class App:
                                    else "Search & pounce") + " (change)", "esm_mode"),
             ("p", f"Auto CQ (F11) pause: {self.cq_pause():g} s (change)",
              "cq_pause"),
+            ("w", "Cluster telnet window: "
+                  + ("shown" if self.telnet_window() else "hidden") + " (change)",
+             "telnet_window"),
             ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit")]}
 
     def radio_menu(self):
@@ -2494,6 +2497,11 @@ class App:
                           ("s", "Start rigctld", "rig_start"),
                           ("x", "Stop rigctld", "rig_stop"),
                           ("o", f"Start with llog: {auto} (change)", "rig_auto")]}
+
+    def telnet_window(self):
+        """Whether the telnet window of the cluster panel is shown."""
+        return self.cfg["cluster"].get("telnet_window", "yes").strip().lower() in (
+            "yes", "true", "on", "1")
 
     def enter_sends(self):
         """Whether ESM is on: Enter sends the CW messages of the QSO."""
@@ -2598,6 +2606,13 @@ class App:
                         "ESM off: Enter only logs") + f"{problem}."
         elif action == "backup":
             self.manual_backup()
+        elif action == "telnet_window":
+            new = "no" if self.telnet_window() else "yes"
+            problem = self.save_setting("cluster", telnet_window=new)
+            self.msg = ("Cluster telnet window " + ("shown" if new == "yes" else
+                        "hidden; the list uses the whole panel") + f"{problem}.")
+            if new == "yes" and not self.cluster.host:
+                self.msg += " It appears once a cluster node is configured."
         elif action == "cq_pause":
             def save(value):
                 try:
@@ -3044,7 +3059,8 @@ class App:
             # the telnet window: bottom right, from the height of the
             # multiplier line down to the message line; the list ends above it
             tel_top = h - 9 - extra - len(mult_rows)
-            telnet = bool(self.cluster.host) and tel_top - line >= 6
+            telnet = (self.telnet_window() and bool(self.cluster.host)
+                      and tel_top - line >= 6)
             room = max((tel_top if telnet else h - 3) - line, 1)
             if telnet:
                 put(tel_top, panel_x, (f"-- Cluster telnet {self.cluster.host} "

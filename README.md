@@ -410,8 +410,10 @@ cluster node as it comes in: the node's spots of all bands, its answers and
 messages, and the spots you send (marked `>`). It starts at the height of
 the multiplier line and ends above the message line; the list of spots ends
 above it. Several spaces in a row are shown as one, so that a spot line fits;
-longer lines are cut off. The window is left out when no cluster node is
-configured or the terminal is too low for it.
+longer lines are cut off. The menu (Alt-M, then W) hides the window and shows
+it again; the choice is kept in `config.ini` (`telnet_window` in
+`[cluster]`). The window is also left out when no cluster node is configured
+or the terminal is too low for it.
 
 The panel needs a terminal at least 142 columns wide; on narrower terminals
 it is hidden. It works without a cluster node too, with stored and worked
@@ -474,14 +476,14 @@ Everything that stays the same from contest to contest is in
 `~/.config/llog/config.ini`. llog asks a few questions on the very first
 start and writes the file; after that you edit it with a text editor. A few
 settings are also written by the menu (radio detection, start `rigctld` with
-llog, ESM on or off, auto CQ pause).
+llog, ESM on or off, auto CQ pause, telnet window).
 
 | Section | Settings |
 | --- | --- |
 | `[station]` | `call`, `email`; optional paths `country_file`, `scp_file`, `worked_before` |
 | `[qrz]` | `username`, `password` for the callsign lookup |
 | `[rig]` | `host` and `port` of `rigctld`, `vfo_switch`, `tune_command`, and the `rigctld_*` settings the radio menu writes |
-| `[cluster]` | `host`, `port`, `call`, `minutes` |
+| `[cluster]` | `host`, `port`, `call`, `minutes`, `telnet_window` |
 | `[backup]` | `minutes`, `keep`, `folder` |
 | `[cw]` | `enter_sends` (ESM on or off), `cq_pause` (seconds between repeated CQs) |
 
@@ -797,7 +799,7 @@ line above it the CW message keys.
 | Del | Remove the highlighted stored station |
 | Alt-S | Spot a station on the DX cluster (asks for a comment first) |
 | Alt-D | Delete the QSO entered last, or the selected one while editing |
-| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ESM on/off, Run or S&P, auto CQ pause, ATU tune, quit |
+| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ESM on/off, Run or S&P, auto CQ pause, telnet window, ATU tune, quit |
 | Ctrl-X | Quit directly, without the menu |
 
 Alt and a letter needs a terminal that sends Alt as an Escape prefix, which
@@ -808,7 +810,7 @@ is the usual setting on Linux.
 Alt-M opens a small menu in the middle of the screen. Up and Down move, Enter
 selects, Esc goes back one level or closes it; the letter in front of an entry selects it directly
 (`A` for ADIF, `C` for Cabrillo, `B` for a backup, `R` for the radio menu,
-`E` for the ESM switch, `S` for Run or search and pounce, `P` for the auto CQ pause, `T` for ATU tune, `Q` to quit). The exports are written
+`E` for the ESM switch, `S` for Run or search and pounce, `P` for the auto CQ pause, `W` for the telnet window, `T` for ATU tune, `Q` to quit). The exports are written
 next to the log file and the message line shows the file name.
 
 ### Editing a QSO
