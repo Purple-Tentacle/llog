@@ -1266,6 +1266,7 @@ class Cluster(threading.Thread):
         hz = round(float(khz) * 1000)
         spot = {"call": call.upper(), "freq_hz": hz, "band": band_of(hz),
                 "spotter": spotter.rstrip("-#:"), "comment": comment,
+                "skimmer": "#" in spotter,
                 "time": hhmm, "seen": seen}
         with self._lock:
             old = self._spots.get((spot["call"], spot["band"]))
@@ -1675,7 +1676,10 @@ def load_config(config_dir, contest):
                            "rigctld_options": "", "rigctld_autostart": "no",
                            "rigctld_command": "rigctld"},
                    "cluster": {"host": "", "port": "7300", "minutes": "30",
-                               "call": "", "telnet_window": "yes"},
+                               "call": "", "telnet_window": "yes",
+                               "spot_from": "", "spot_dx": "",
+                               "spot_comment": "", "hide_worked": "no",
+                               "hide_skimmer": "no", "new_mults_only": "no"},
                    "backup": {"minutes": "5", "keep": "50", "folder": ""},
                    "cw": {"enter_sends": "yes", "cq_pause": "3"},
                    "contest": {"contest": "", "exchange_sent": "",
@@ -1811,6 +1815,8 @@ class App:
         self.forced_mode = cfg["contest"].get("mode", "").strip().upper()
         self.history = load_history(cfg)
         self.partial = PartialCheck(cfg)
+        self.countries = load_countries(cfg)     # for the cluster filters
+        self.filtered = 0     # panel entries the cluster filters hide
         self._logged = (None, frozenset())   # (log state, callsigns in the log)
         self.entry = {v: self.new_entry() for v in "AB"}
         self.row = "A"
@@ -2482,9 +2488,7 @@ class App:
                                    else "Search & pounce") + " (change)", "esm_mode"),
             ("p", f"Auto CQ (F11) pause: {self.cq_pause():g} s (change)",
              "cq_pause"),
-            ("w", "Cluster telnet window: "
-                  + ("shown" if self.telnet_window() else "hidden") + " (change)",
-             "telnet_window"),
+            ("d", "DX cluster ...", "cluster"),
             ("t", "ATU tune (transmits)", "atu"), ("q", "Quit", "quit")]}
 
     def radio_menu(self):
@@ -2498,10 +2502,137 @@ class App:
                           ("x", "Stop rigctld", "rig_stop"),
                           ("o", f"Start with llog: {auto} (change)", "rig_auto")]}
 
+    def cluster_flag(self, name, default="no"):
+        return self.cfg["cluster"].get(name, default).strip().lower() in (
+            "yes", "true", "on", "1")
+
     def telnet_window(self):
         """Whether the telnet window of the cluster panel is shown."""
-        return self.cfg["cluster"].get("telnet_window", "yes").strip().lower() in (
-            "yes", "true", "on", "1")
+        return self.cluster_flag("telnet_window", "yes")
+
+    def place_list(self, name):
+        """A spot_from / spot_dx setting as a set of continents and country
+        prefixes, e.g. {'EU', 'K'}."""
+        return {x for x in self.cfg["cluster"].get(name, "").upper()
+                .replace(",", " ").split()}
+
+    def cluster_menu(self, index=0):
+        cl = self.cfg["cluster"]
+        show = lambda name: "hidden" if self.cluster_flag(name) else "shown"
+        some = lambda name: " ".join(sorted(self.place_list(name))) or "all"
+        return {"title": "DX cluster", "index": index,
+                "info": ["Node: " + (f"{self.cluster.host}:{self.cluster.port}, "
+                                     f"{self.cluster.status}"
+                                     if self.cluster.host else "none configured"),
+                         "Filters apply to cluster spots, not to stored stations."],
+                "items": [
+                    ("w", f"Telnet window: "
+                          f"{'shown' if self.telnet_window() else 'hidden'} (change)",
+                     "telnet_window"),
+                    ("f", f"Spotters from: {some('spot_from')} (change)", "spot_from"),
+                    ("d", f"DX stations from: {some('spot_dx')} (change)", "spot_dx"),
+                    ("c", "Comment contains: "
+                          f"{cl.get('spot_comment', '').strip() or 'anything'} (change)",
+                     "spot_comment"),
+                    ("h", f"Worked stations: {show('hide_worked')} (change)",
+                     "hide_worked"),
+                    ("k", f"Skimmer spots: {show('hide_skimmer')} (change)",
+                     "hide_skimmer"),
+                    ("n", "New multipliers only: "
+                          f"{'yes' if self.cluster_flag('new_mults_only') else 'no'} "
+                          "(change)", "new_mults_only"),
+                    ("x", "Clear all filters", "filters_off")]}
+
+    CLUSTER_ACTIONS = ("telnet_window", "spot_from", "spot_dx", "spot_comment",
+                       "hide_worked", "hide_skimmer", "new_mults_only",
+                       "filters_off")
+
+    def cluster_action(self, action):
+        index = self.CLUSTER_ACTIONS.index(action)
+        reopen = True
+        if action == "telnet_window":
+            new = "no" if self.telnet_window() else "yes"
+            problem = self.save_setting("cluster", telnet_window=new)
+            self.msg = ("Cluster telnet window " + ("shown" if new == "yes" else
+                        "hidden; the list uses the whole panel") + f"{problem}.")
+            if new == "yes" and not self.cluster.host:
+                self.msg += " It appears once a cluster node is configured."
+        elif action in ("spot_from", "spot_dx"):
+            what = "Spotters" if action == "spot_from" else "DX stations"
+
+            def save(value, action=action, what=what):
+                places = " ".join(value.upper().replace(",", " ").split())
+                problem = self.save_setting("cluster", **{action: places})
+                self.msg = (f"{what}: {places or 'all'}{problem}." + (
+                    "" if self.countries or not places else
+                    " No cty.dat found, so this filter cannot work yet."))
+            self.prompt = {"text": f"{what} from - continents (EU NA SA AS AF OC) "
+                                   "and/or country prefixes (DL OK G), empty = "
+                                   "all: ", "value": "", "action": save}
+            reopen = False
+        elif action == "spot_comment":
+            def save(value):
+                problem = self.save_setting("cluster", spot_comment=value.strip())
+                self.msg = (f"Spots shown: comment contains "
+                            f"'{value.strip()}'{problem}." if value.strip() else
+                            f"Comment filter off{problem}.")
+            self.prompt = {"text": "Show only spots whose comment contains "
+                                   "(empty = all): ", "value": "", "action": save}
+            reopen = False
+        elif action == "filters_off":
+            problem = self.save_setting(
+                "cluster", spot_from="", spot_dx="", spot_comment="",
+                hide_worked="no", hide_skimmer="no", new_mults_only="no")
+            self.msg = f"All cluster filters are off{problem}."
+        else:
+            new = "no" if self.cluster_flag(action) else "yes"
+            problem = self.save_setting("cluster", **{action: new})
+            text = {"hide_worked": "Worked stations are " +
+                                   ("hidden" if new == "yes" else "shown"),
+                    "hide_skimmer": "Skimmer spots are " +
+                                    ("hidden" if new == "yes" else "shown"),
+                    "new_mults_only": "Only new multipliers are shown"
+                                      if new == "yes" else "All spots are shown"}
+            self.msg = text[action] + f"{problem}."
+            if (action == "new_mults_only" and new == "yes"
+                    and not self.call_mults()):
+                self.msg += (" This contest's multipliers come from the "
+                             "exchange, so a spot cannot show them: no effect.")
+        if reopen:
+            self.menus = [self.main_menu(), self.cluster_menu(index)]
+            self.menus[0]["index"] = 7           # Esc returns to "DX cluster"
+
+    def call_mults(self):
+        """Whether a callsign alone tells its multiplier in this contest."""
+        return bool(self.scoring["has_mults"] and (
+            self.scoring.get("mult_prefix") or self.scoring.get("mult_country")
+            or self.scoring.get("mult_calls")))
+
+    def spot_hidden(self, row):
+        """Whether the cluster filters hide this panel entry."""
+        cl = self.cfg["cluster"]
+        if self.cluster_flag("hide_worked") and row["worked"]:
+            return True
+        if row["kind"] != "spot":
+            return False
+        if self.cluster_flag("hide_skimmer") and row.get("skimmer"):
+            return True
+        word = cl.get("spot_comment", "").strip().upper()
+        if word and word not in row["comment"].upper():
+            return True
+        if self.countries:
+            for name, call in (("spot_from", row["spotter"]),
+                               ("spot_dx", row["call"])):
+                wanted = self.place_list(name)
+                land = self.countries.lookup(call) if wanted else None
+                if wanted and not (land and {land["cont"].upper(),
+                                             land["prefix"].upper()} & wanted):
+                    return True
+        if self.cluster_flag("new_mults_only") and self.call_mults():
+            keys = qso_mults(self.scoring, row["call"], "", row["freq_hz"])
+            if all(key in self.score()["seen"] for key in keys):
+                return True
+        return False
 
     def enter_sends(self):
         """Whether ESM is on: Enter sends the CW messages of the QSO."""
@@ -2606,13 +2737,11 @@ class App:
                         "ESM off: Enter only logs") + f"{problem}."
         elif action == "backup":
             self.manual_backup()
-        elif action == "telnet_window":
-            new = "no" if self.telnet_window() else "yes"
-            problem = self.save_setting("cluster", telnet_window=new)
-            self.msg = ("Cluster telnet window " + ("shown" if new == "yes" else
-                        "hidden; the list uses the whole panel") + f"{problem}.")
-            if new == "yes" and not self.cluster.host:
-                self.msg += " It appears once a cluster node is configured."
+        elif action == "cluster":
+            self.menus = [self.main_menu(), self.cluster_menu()]
+            self.menus[0]["index"] = 7           # Esc returns to "DX cluster"
+        elif action in self.CLUSTER_ACTIONS:
+            self.cluster_action(action)
         elif action == "cq_pause":
             def save(value):
                 try:
@@ -2841,6 +2970,8 @@ class App:
             row["time"] = f"{age}m" if age < 1000 else ">999"
             row["worked"] = row["kind"] == "worked" or bool(self.log.find_dupe(
                 self.rules, row["call"], row["freq_hz"], self.mode()))
+        shown = [row for row in rows if not self.spot_hidden(row)]
+        self.filtered, rows = len(rows) - len(shown), shown
         if self.view == "map":
             rows.sort(key=lambda r: (r["freq_hz"], r["call"]))
             # mark our position: on the stations we are tuned to (within
@@ -3045,17 +3176,19 @@ class App:
         if panel_x:
             band = band_of(self.freq() or 0) or "?"
             # rows start with a one-character flag column, hence the +1
-            put(2, panel_x + 1, f"Band map {band} (Alt-B: newest first)"
-                if self.view == "map" else f"Newest {band} (Alt-B: band map)",
-                curses.A_BOLD)
             spots = self.panel_rows()
+            put(2, panel_x + 1, (f"Band map {band} (Alt-B: newest first)"
+                if self.view == "map" else f"Newest {band} (Alt-B: band map)")
+                + (f"  filter: {self.filtered} hidden" if self.filtered else ""),
+                curses.A_BOLD)
             line = 3
             if self.cluster.host and self.cluster.status != "connected":
                 put(line, panel_x + 1,
                     f"cluster {self.cluster.status}"[:panel_w - 3])
                 line += 1
             elif not spots:
-                put(line, panel_x + 1, "nothing on this band yet")
+                put(line, panel_x + 1, "nothing passes the filters (Alt-M, D)"
+                    if self.filtered else "nothing on this band yet")
             # the telnet window: bottom right, from the height of the
             # multiplier line down to the message line; the list ends above it
             tel_top = h - 9 - extra - len(mult_rows)

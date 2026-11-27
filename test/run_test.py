@@ -363,6 +363,48 @@ African Italy:             33:  37:  AF:   35.67:   -12.67:    -1.0:  *IG9:
     IG9,IH9;
 """)
 cty = m.CountryFile(os.path.join(work, "cty.dat"))
+# cluster filters from the DX cluster menu (they need the country file above)
+appf = m.App(m.load_config(work, "wsa"), m.Log(os.path.join(work, "f.db")))
+appf.manual_freq["A"] = 14030000
+for line in ("DX de DL1AAA:     14025.0  K1ABC        CQ TEST                        2153Z",
+             "DX de K7XYZ:      14010.0  DL5QQ        wsa contest                    2154Z",
+             "DX de OK1RR-#:    14012.0  EA3ZZ        CW 20 dB                       2154Z"):
+    appf.cluster.feed(line)
+appf.log.add(ts="2026-12-01 18:11:00", mycall="DA2IT", call="DL5QQ", freq_hz=14010500,
+             mode="SSB", rst_s="59", rst_r="59", exch_s="N99", exch_r="")
+appf.val["call"] = "EA8ZZ"; appf.manual_freq["A"] = 14050000; appf.store_for_later()
+shown = lambda: sorted(r["call"] for r in appf.panel_rows())
+def menu(*keys):
+    appf.menus = [appf.main_menu()]
+    for key in keys:
+        for ch in key: appf.key(None, ch)
+assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"] and appf.filtered == 0
+menu("d", "f", "eu\r"); assert appf.cfg["cluster"]["spot_from"] == "EU" and not appf.menus
+assert shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"] and appf.filtered == 1      # spotter K7XYZ is NA
+menu("d", "f", "eu, k\r"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
+menu("d", "f", "\r"); assert appf.cfg["cluster"]["spot_from"] == "" and "all" in appf.msg
+menu("d", "d", "dl ea\r"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ"]   # stored EA8ZZ always stays
+menu("d", "d", "\r")
+menu("d", "k"); assert shown() == ["DL5QQ", "EA8ZZ", "K1ABC"] and "Skimmer spots are hidden" in appf.msg
+assert appf.menus[-1]["title"] == "DX cluster" and appf.menus[-1]["index"] == 5
+assert "Skimmer spots: hidden" in appf.menus[-1]["items"][5][1]
+appf.key(None, "k"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
+appf.key(None, "h"); assert shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"]          # DL5QQ is in the log
+appf.toggle_view(); assert shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"]; appf.toggle_view()   # band map too
+appf.key(None, "h")
+menu("d", "c", "cq test\r"); assert shown() == ["EA8ZZ", "K1ABC"] and appf.filtered == 2
+drawn = []; appf.menus = []; appf.warn_attr = appf.good_attr = 0
+appf.draw(type("S", (), {"erase": lambda s: None, "getmaxyx": lambda s: (40, 203),
+    "addstr": lambda s, y, x, t, a=0: drawn.append(t), "move": lambda s, *a: None,
+    "refresh": lambda s: None})())
+assert any("filter: 2 hidden" in t for t in drawn)
+menu("d", "n"); assert "no effect" in appf.msg and shown() == ["EA8ZZ", "K1ABC"]   # WSA: DOK multipliers
+menu("d", "x"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"] and "filters are off" in appf.msg
+savedf = configparser.ConfigParser(); savedf.read(os.path.join(work, "config.ini"))
+assert savedf["cluster"]["hide_skimmer"] == "no" and savedf["cluster"]["spot_comment"] == ""
+appf.cfg["contest"]["mult_country"] = "yes"; appf.scoring = m.score_rules(appf.cfg); appf._score = (None, None)   # country multipliers
+menu("d", "n"); assert "no effect" not in appf.msg and shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"]   # DL is worked
+menu("d", "x")
 look = lambda c: (lambda i: i and (i["prefix"], i["cont"], i["cq"]))(cty.lookup(c))
 assert look("DA2IT") == ("DL", "EU", "14") and look("OL5Y") == ("OK", "EU", "15")
 assert look("K7ABC") == ("K", "NA", "3") and look("KH6XX") == ("K", "OC", "31")
@@ -670,11 +712,15 @@ assert not any("F11" in text for text, _ in appr.key_line()[0])
 appr.esm_mode = "run"; appr.save_setting("cw", cq_pause="3")
 # the telnet window of the cluster panel is switched in the menu and kept
 assert appr.telnet_window(); appr.menus = [appr.main_menu()]
-assert appr.menus[0]["items"][7][1] == "Cluster telnet window: shown (change)"
+assert appr.menus[0]["items"][7] == ("d", "DX cluster ...", "cluster")
+appr.menu_key("d"); assert appr.menus[-1]["title"] == "DX cluster" and len(appr.menus) == 2
+assert appr.menus[-1]["items"][0][1] == "Telnet window: shown (change)"
 appr.menu_key("w"); assert not appr.telnet_window() and "hidden" in appr.msg
+assert appr.menus[-1]["title"] == "DX cluster" and "hidden" in appr.menus[-1]["items"][0][1]   # stays open
 saved.read(os.path.join(cdir, "config.ini")); assert saved["cluster"]["telnet_window"] == "no"
-appr.menus = [appr.main_menu()]; assert "hidden" in appr.menus[0]["items"][7][1]
 appr.menu_key("w"); assert appr.telnet_window()
+appr.menu_key("\x1b"); assert len(appr.menus) == 1 and appr.menus[0]["index"] == 7
+appr.menu_key("\x1b"); assert not appr.menus
 # voice memories in SSB: F1 = memory 1 (Run), F4 = memory 2
 voiced = []; appr.rig.mode["A"] = "USB"
 def fake_voice(n): voiced.append(n); appr.rig.voice_busy = True

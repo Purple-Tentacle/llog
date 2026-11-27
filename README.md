@@ -410,7 +410,7 @@ cluster node as it comes in: the node's spots of all bands, its answers and
 messages, and the spots you send (marked `>`). It starts at the height of
 the multiplier line and ends above the message line; the list of spots ends
 above it. Several spaces in a row are shown as one, so that a spot line fits;
-longer lines are cut off. The menu (Alt-M, then W) hides the window and shows
+longer lines are cut off. The cluster menu (Alt-M, D, then W) hides the window and shows
 it again; the choice is kept in `config.ini` (`telnet_window` in
 `[cluster]`). The window is also left out when no cluster node is configured
 or the terminal is too low for it.
@@ -418,6 +418,44 @@ or the terminal is too low for it.
 The panel needs a terminal at least 142 columns wide; on narrower terminals
 it is hidden. It works without a cluster node too, with stored and worked
 stations only.
+
+### Cluster menu and filters
+
+Alt-M, then D opens the cluster menu. It shows the node and its state, has
+the switch for the telnet window, and sets the filters that decide which
+cluster spots the panel shows:
+
+| Entry | What it does |
+| --- | --- |
+| Spotters from | Only spots sent by stations in the named places, for example `EU`: a station spotted from another continent is often not audible here |
+| DX stations from | Only spotted stations in the named places, for example `DL` for WNA and WSA |
+| Comment contains | Only spots whose comment contains the text (upper and lower case do not matter) |
+| Worked stations | Hide stations you have already worked (dupes) instead of dimming them; in the band map this also hides the stations from your log |
+| Skimmer spots | Hide automatic spots, recognised by a spotter callsign ending in `-#` |
+| New multipliers only | Only stations that would be a new multiplier |
+| Clear all filters | Switches every filter off |
+
+Places are continents (`EU NA SA AS AF OC`) and country prefixes as the
+country file uses them (`DL OK G K`), several separated by spaces or commas;
+an empty entry means all. These two filters need the country file `cty.dat`
+(see "Files you provide") and do nothing without it.
+
+"New multipliers only" works where the callsign tells the multiplier:
+country, prefix or `mult_calls` multipliers. In contests whose multipliers
+come from the received exchange, such as DOKs, a spot cannot show them and
+the filter has no effect.
+
+The filters apply to cluster spots. Stations you stored for later are always
+shown, except that "Worked stations: hidden" also hides them once worked.
+While entries are hidden, the panel title says how many (`filter: 12
+hidden`). The telnet window always shows everything. Switches in this menu
+leave it open, so several can be set in a row; Esc goes back.
+
+The settings are global, not per contest, and are kept in the `[cluster]`
+section of `config.ini`: `spot_from`, `spot_dx`, `spot_comment`,
+`hide_worked`, `hide_skimmer`, `new_mults_only`.
+
+### Node settings
 
 Add the node to `config.ini`:
 
@@ -476,14 +514,14 @@ Everything that stays the same from contest to contest is in
 `~/.config/llog/config.ini`. llog asks a few questions on the very first
 start and writes the file; after that you edit it with a text editor. A few
 settings are also written by the menu (radio detection, start `rigctld` with
-llog, ESM on or off, auto CQ pause, telnet window).
+llog, ESM on or off, auto CQ pause, telnet window, cluster filters).
 
 | Section | Settings |
 | --- | --- |
 | `[station]` | `call`, `email`; optional paths `country_file`, `scp_file`, `worked_before` |
 | `[qrz]` | `username`, `password` for the callsign lookup |
 | `[rig]` | `host` and `port` of `rigctld`, `vfo_switch`, `tune_command`, and the `rigctld_*` settings the radio menu writes |
-| `[cluster]` | `host`, `port`, `call`, `minutes`, `telnet_window` |
+| `[cluster]` | `host`, `port`, `call`, `minutes`, `telnet_window`, and the spot filters the cluster menu writes |
 | `[backup]` | `minutes`, `keep`, `folder` |
 | `[cw]` | `enter_sends` (ESM on or off), `cq_pause` (seconds between repeated CQs) |
 
@@ -799,7 +837,7 @@ line above it the CW message keys.
 | Del | Remove the highlighted stored station |
 | Alt-S | Spot a station on the DX cluster (asks for a comment first) |
 | Alt-D | Delete the QSO entered last, or the selected one while editing |
-| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ESM on/off, Run or S&P, auto CQ pause, telnet window, ATU tune, quit |
+| Alt-M | Menu: export ADIF (`<logfile>.adi`), export Cabrillo (`<CALL>-<date>-1.cbr`), backup now, radio setup, ESM on/off, Run or S&P, auto CQ pause, DX cluster menu, ATU tune, quit |
 | Ctrl-X | Quit directly, without the menu |
 
 Alt and a letter needs a terminal that sends Alt as an Escape prefix, which
@@ -810,7 +848,7 @@ is the usual setting on Linux.
 Alt-M opens a small menu in the middle of the screen. Up and Down move, Enter
 selects, Esc goes back one level or closes it; the letter in front of an entry selects it directly
 (`A` for ADIF, `C` for Cabrillo, `B` for a backup, `R` for the radio menu,
-`E` for the ESM switch, `S` for Run or search and pounce, `P` for the auto CQ pause, `W` for the telnet window, `T` for ATU tune, `Q` to quit). The exports are written
+`E` for the ESM switch, `S` for Run or search and pounce, `P` for the auto CQ pause, `D` for the DX cluster menu, `T` for ATU tune, `Q` to quit). The exports are written
 next to the log file and the message line shows the file name.
 
 ### Editing a QSO
