@@ -2013,13 +2013,17 @@ class App:
         self.history = load_history(cfg)
         self.partial = PartialCheck(cfg)
         self.countries = load_countries(cfg)     # for the cluster filters
-        # exchange_prefill = zone: the received exchange is filled in with
-        # the CQ zone of the callsign's country
-        self.prefill = cfg["contest"].get("exchange_prefill", "").strip().lower()
-        if self.prefill not in ("", "zone"):
-            sys.exit("Contest file: exchange_prefill must be 'zone' or empty")
-        if self.prefill and not self.countries:
+        # exchange_prefill: where the received exchange is filled in from,
+        # in this order: log (this contest's log), history (the worked-before
+        # file), zone (CQ zone of the callsign's country)
+        self.prefill = cfg["contest"].get("exchange_prefill", "").lower().replace(
+            ",", " ").split()
+        if set(self.prefill) - {"log", "history", "zone"}:
+            sys.exit("Contest file: exchange_prefill must be a list of log, "
+                     "history and zone (or empty)")
+        if "zone" in self.prefill and not self.countries:
             load_countries(cfg, needed=True)     # explains what is missing
+        self._log_exch = (None, {})   # (log state, callsign -> last exchange)
         self.web = WebSpots(cfg, cfg["cluster"].getint("minutes"))
         # SOTA spots: SOTA's own cluster node, switched in the cluster menu
         self.sota = Cluster(cfg["cluster"]["sota_host"].strip(),
@@ -2158,8 +2162,8 @@ class App:
             grid = (self.qrz.info(call) or {}).get("grid", "")
             if is_locator(grid):
                 val["loc"], entry["auto"]["loc"] = grid.upper()[:8], call
-        if self.prefill == "zone":
-            # the same for the exchange: the usual CQ zone of the country
+        if self.prefill:
+            # the same for the received exchange (exchange_prefill)
             for entry in self.entry.values():
                 val, call = entry["val"], entry["val"]["call"]
                 if entry["auto"].get("exch") not in (None, call):
@@ -2168,10 +2172,40 @@ class App:
                 if (val["exch"] or not is_call(call)
                         or entry["manual"].get("exch") == call):
                     continue
+                value = self.prefill_value(call)
+                if value:
+                    val["exch"], entry["auto"]["exch"] = value[:WIDTHS["exch"]], call
+
+    def prefill_value(self, call):
+        """The exchange to suggest for a callsign, from the first source of
+        exchange_prefill that knows one, or ''."""
+        serial = "#" in self.cfg["contest"]["exchange_sent"]
+        for source in self.prefill:
+            if source == "zone":
                 land = self.countries.lookup(call)
                 if land and str(land.get("cq", "")).isdigit():
-                    val["exch"] = f"{int(land['cq']):02d}"
-                    entry["auto"]["exch"] = call
+                    return f"{int(land['cq']):02d}"
+                continue
+            if source == "log":
+                state = self.log.db.total_changes
+                if self._log_exch[0] != state:
+                    self._log_exch = (state, {
+                        base_call(q["call"]): q["exch_r"]
+                        for q in self.log.rows() if (q["exch_r"] or "").strip()})
+                known = self._log_exch[1].get(base_call(call), "")
+            else:
+                known = (self.history.lookup(call) or {}).get("exch", "")
+            words = known.upper().split()
+            if serial:
+                # a running number is new in every QSO: only the fixed part
+                # is suggested, and the space after it lets the number be
+                # typed behind it
+                words = [w for w in words if not w.isdigit()]
+                if words:
+                    return " ".join(words) + " "
+            elif words:
+                return " ".join(words)
+        return ""
 
     def dupe(self):
         if self.edit:      # compare with the QSOs made before the edited one
@@ -3166,7 +3200,8 @@ class App:
             self.typed(name)
         elif isinstance(ch, str) and ch.isprintable():
             entry = self.entry[self.row]
-            if name != "call" and entry["auto"].get(name) == self.val["call"]:
+            if (name != "call" and entry["auto"].get(name) == self.val["call"]
+                    and not self.val[name].endswith(" ")):
                 self.val[name] = ""      # typing replaces what was filled in
             if len(self.val[name]) < WIDTHS[name]:
                 self.val[name] += ch.upper()

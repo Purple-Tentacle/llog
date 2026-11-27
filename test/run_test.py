@@ -580,7 +580,7 @@ appz.manual_freq["A"] = 14012000; EXZ = m.FIELDS.index("exch"); sentz = []
 def typez(text):
     for ch in text: appz.entry_key(ch)
     appz.sync_prefill()
-assert appz.prefill == "zone"; typez("K7AB"); assert appz.val["exch"] == "03"
+assert appz.prefill == ["log", "zone"]; typez("K7AB"); assert appz.val["exch"] == "03"
 typez("\x7f"); assert appz.val["exch"] == "03"; typez("\x7f\x7f"); assert appz.val["exch"] == ""     # K7A, then K: no callsign left
 typez("1ABC"); assert appz.val["exch"] == "05"; appz.clear()
 typez("OK1AA"); assert appz.val["exch"] == "15" and appz.new_mult() == "Z15, OK"
@@ -602,6 +602,32 @@ typez("OK2XX"); appz.fkey(4); appz.enter()                                  # ca
 assert sentz[-2:] == ["DA2IT", "TU 5NN 14"] and appz.log.rows()[-1]["exch_r"] == "15"
 typez("OL5Y"); appz.focus = EXZ; typez("15"); appz.enter()                  # zone typed by hand: as before
 assert sentz[-1] == "TU 5NN 14" and appz.log.count() == 5
+appz.esm_mode = "run"; appz.rig.online = False
+appz.focus = 0; typez("K7ABC"); assert appz.val["exch"] == "03"; appz.focus = EXZ; typez("04"); appz.enter()   # he sent zone 4
+appz.manual_freq["A"] = 7012000; typez("K7ABC"); assert appz.val["exch"] == "04"   # other band: his own zone, not the usual one
+appz.clear(); typez("K7XYZ"); assert appz.val["exch"] == "03"; appz.clear()
+# exchange_prefill = log, history: the DOK from this log or the worked-before file
+hadi = os.path.join(work, "prefill.adi")
+open(hadi, "w").write("<EOH><CALL:6>DL1HIS<QSO_DATE:8>20260101<DARC_DOK:3>N05<EOR><CALL:6>DL2NUM<QSO_DATE:8>20260101<SRX_STRING:3>017<EOR>")
+ch = m.load_config(work, os.path.join(EX, "wna.ini")); ch["contest"]["exchange_sent"] = "N99"
+ch["contest"]["worked_before"] = hadi; assert ch["contest"]["exchange_prefill"] == "log, history"
+apph = m.App(ch, m.Log(os.path.join(work, "prefill.db"))); apph.manual_freq["A"] = 144300000
+def typeh(text):
+    for c in text: apph.entry_key(c)
+    apph.sync_prefill()
+typeh("DL1HIS"); assert apph.val["exch"] == "N05" and apph.new_mult() == "N05"       # from the file
+apph.focus = EXZ; typeh("N"); assert apph.val["exch"] == "N"; typeh("07"); apph.enter()   # he has a new DOK: typed over
+apph.manual_freq["A"] = 432200000; typeh("DL1HIS/P"); assert apph.val["exch"] == "N07"   # this log goes first, /P ignored
+apph.clear(); typeh("DL2NUM"); assert apph.val["exch"] == "017"; apph.clear()
+typeh("DL9NEW"); assert apph.val["exch"] == ""; apph.clear()
+# with a running number in the exchange only the fixed part is suggested, the number is typed behind it
+ch["contest"]["exchange_sent"] = "# N99"
+typeh("DL2NUM"); assert apph.val["exch"] == ""; apph.clear()                         # a number only: nothing
+typeh("DL1HIS"); assert apph.val["exch"] == "N07 "; apph.focus = EXZ; typeh("012")
+assert apph.val["exch"] == "N07 012" and apph.new_mult() == "N07"; apph.enter()       # the multiplier is found in it
+assert apph.log.rows()[-1]["exch_r"] == "N07 012" and apph.log.count() == 2
+apph.manual_freq["A"] = 1296200000; typeh("DL1HIS"); assert apph.val["exch"] == "N07 "   # the number is not suggested again
+apph.clear()
 bad = m.load_config(work, os.path.join(EX, "cq-ww-cw.ini")); bad["contest"]["exchange_prefill"] = "dok"
 try: m.App(bad, m.Log(os.path.join(work, "bad.db"))); assert False
 except SystemExit as exc: assert "exchange_prefill" in str(exc)

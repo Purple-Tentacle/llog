@@ -968,28 +968,40 @@ The received exchange is a free-text field, so a received number is typed as
 the station sends it.
 
 
-### Pre-filling the received exchange with the zone
+### Pre-filling the received exchange
 
-For contests whose exchange is the CQ zone, set
+llog can suggest the received exchange as soon as the call field holds a
+callsign. `exchange_prefill` in the contest file names the sources, in the
+order in which they are tried:
 
 ```
-exchange_prefill = zone
+exchange_prefill = log, history
 ```
 
-in the contest file. As soon as the call field holds a callsign, llog fills
-the received exchange with the usual CQ zone of that station's country, from
-the country file (`05` for `K1ABC`, `15` for `OK1AA`). It follows the
-callsign while you type and is empty for a callsign the country file does
-not know.
+| Source | Suggests | Useful for |
+| --- | --- | --- |
+| `log` | What the station gave you in an earlier QSO of this contest (on another band or mode); `DL1ABC/P` counts as `DL1ABC` | Every contest with a fixed exchange |
+| `history` | The DOK, or else the received exchange, of the station's last QSO in the worked-before file (see "Worked before") | DOK contests such as WNA and WSA |
+| `zone` | The usual CQ zone of the station's country, from the country file (`05` for `K1ABC`) | Contests whose exchange is the CQ zone |
 
-The zone is a suggestion. Large countries span several zones, and a station
-may send another one than the file says, so listen to what it sends. To
-correct it, go to the exchange field and type: the first key replaces the
-suggestion. A zone you typed or emptied yourself is not touched again. The
-same now applies to a locator that came from the QRZ lookup: typing replaces
-it.
+For example `log, history` for WNA and WSA, and `log, zone` for CQ WW. The
+suggestion follows the callsign while you type and is empty when no source
+knows the station.
 
-With ESM, a pre-filled zone does not shorten the QSO. When running, Enter
+The suggestion is only that. A station may have a new DOK, large countries
+span several zones, and what counts is what the station sends. To correct
+it, go to the exchange field and type: the first key replaces the
+suggestion. An exchange you typed or emptied yourself is not touched again.
+The same applies to a locator that came from the QRZ lookup.
+
+**Contests with a running number.** When your own exchange contains `#`,
+the others send a number too, which is new in every QSO. llog then suggests
+only the fixed part of the earlier exchange (`N13` out of `017 N13`),
+followed by a space, and typing does not replace it: the number you type is
+added behind it (`N13 042`). The order makes no difference for the
+multiplier. If the earlier exchange was a number only, nothing is suggested.
+
+With ESM, a suggested exchange does not shorten the QSO. When running, Enter
 still sends the callsign and your exchange first and logs on the second
 Enter. In search and pounce, Enter first sends your call (F4), although the
 exchange field is already filled, and the next Enter sends your exchange and
