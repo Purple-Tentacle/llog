@@ -1994,11 +1994,13 @@ class App:
         self._serial = (None, "")    # (log state, next exchange to send)
         self.rig = Rig(cfg["rig"]["host"], cfg["rig"].getint("port"),
                        retune=rig_retune(cfg))
-        self.qrz = Qrz(os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
-                       os.environ.get("QRZ_PASSWORD", cfg["qrz"]["password"]))
-        # a contest entered as NON-ASSISTED: no cluster, no spots of any kind
+        # a contest entered as NON-ASSISTED: no cluster, no spots of any
+        # kind, and no QRZ lookup either
         self.unassisted = "NON" in cfg["contest"].get(
             "category_assisted", "").upper()
+        self.qrz = Qrz("", "") if self.unassisted else Qrz(
+            os.environ.get("QRZ_USERNAME", cfg["qrz"]["username"]),
+            os.environ.get("QRZ_PASSWORD", cfg["qrz"]["password"]))
         self.cluster = Cluster(cfg["cluster"]["host"].strip(),
                                cfg["cluster"].getint("port"),
                                cfg["cluster"]["call"].strip().upper()
@@ -3560,7 +3562,9 @@ class App:
             elif is_call(call):
                 put(h - 9, 1, "Worked before: no")
         info = self.qrz.info(call) if is_call(call) else None
-        if not self.qrz.user:
+        if self.unassisted:
+            line = "QRZ: off (NON-ASSISTED contest entry)"
+        elif not self.qrz.user:
             line = "QRZ: no username configured"
         elif not info:
             line = "QRZ: (Tab or Space after the callsign starts the lookup)"

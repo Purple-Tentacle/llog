@@ -576,7 +576,7 @@ assert [x["call"] for x in appw.panel_rows()] == ["OK2XX"]         # N2XX: count
 appw.cfg["cluster"]["new_mults_only"] = "no"
 # NON-ASSISTED in the contest file: no cluster, SOTA or POTA spots at all
 cwn = m.load_config(work, os.path.join(EX, "cq-ww-cw.ini")); cwn["contest"]["category_assisted"] = "non-assisted"
-cwn["cluster"]["pota"] = cwn["cluster"]["sota"] = "yes"
+cwn["cluster"]["pota"] = cwn["cluster"]["sota"] = "yes"; cwn["qrz"]["username"] = "someone"; cwn["qrz"]["password"] = "x"
 appn = m.App(cwn, m.Log(os.path.join(work, "cqwwn.db"))); appn.manual_freq["A"] = 14012000
 assert appn.unassisted and not appn.cluster.active() and not appn.sota.active() and not appn.web.on("pota")
 appn.cluster.feed("DX de DL1AAA:     14026.0  OK2XX        CQ                             2153Z")
@@ -591,6 +591,8 @@ drawn = []; appn.warn_attr = appn.good_attr = 0
 appn.draw(type("S", (), {"erase": lambda s: None, "getmaxyx": lambda s: (40, 203),
     "addstr": lambda s, y, x, t, a=0: drawn.append(t), "move": lambda s, *a: None,
     "refresh": lambda s: None})())
+assert appn.qrz.user == "" and any("QRZ: off (NON-ASSISTED" in t for t in drawn)
+appn.val["call"] = "OK2XX"; appn.leave_call_field(); assert not appn.qrz._busy and not appn.qrz.cache
 assert any("no spots: NON-ASSISTED" in t for t in drawn) and not any("Cluster telnet" in t for t in drawn)
 assert not appw.unassisted and appw.cluster.active()
 cabw = os.path.join(work, "cqww.cbr"); appw.log.export_cabrillo(cabw, cw); cabw = open(cabw).read()

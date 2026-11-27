@@ -425,11 +425,12 @@ Many contests have a category without "QSO finding assistance", which rules
 out the DX cluster and every other source of spots. When the contest file
 says `category_assisted = NON-ASSISTED`, llog switches all of it off for that
 contest: it does not connect to the cluster node or the SOTA node, fetches no
-POTA spots, shows no telnet window, and Alt-S sends no spot. The panel says
+POTA spots, shows no telnet window, Alt-S sends no spot, and there is no QRZ
+lookup (so no name, and no locator filled in from it). The panel says
 so and still shows your own entries: stations stored for later and, in the
 band map, the stations in your log. Nothing in `config.ini` is changed, so
 other contests use the cluster as before. Check partial, the country file
-and the QRZ lookup are not affected.
+and the worked-before file are not affected.
 
 ### Cluster menu and filters
 
