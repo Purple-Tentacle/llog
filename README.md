@@ -431,6 +431,7 @@ cluster spots the panel shows:
 | DX stations from | Only spotted stations in the named places, for example `DL` for WNA and WSA |
 | POTA spots, SOTA spots | Switch the two extra sources on and off (see below) |
 | Comment contains | Only spots with one of the given words in their comment or source, for example `pota, sota` (several words separated by commas; upper and lower case do not matter) |
+| Comment does not contain | Hides spots with one of the given words in their comment or source, for example `ft8, ft4` (several words separated by commas) |
 | Worked stations | Hide stations you have already worked (dupes) instead of dimming them; in the band map this also hides the stations from your log |
 | Skimmer spots | Hide automatic spots, recognised by a spotter callsign ending in `-#` |
 | New multipliers only | Only stations that would be a new multiplier |
@@ -454,7 +455,7 @@ hidden`). The telnet window always shows everything. Switches in this menu
 leave it open, so several can be set in a row; Esc goes back.
 
 The settings are global, not per contest, and are kept in the `[cluster]`
-section of `config.ini`: `spot_from`, `spot_dx`, `spot_comment`,
+section of `config.ini`: `spot_from`, `spot_dx`, `spot_comment`, `spot_exclude`,
 `hide_worked`, `hide_skimmer`, `new_mults_only`, `pota`, `sota`.
 
 ### Login callsigns

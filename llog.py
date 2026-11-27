@@ -1830,7 +1830,8 @@ def load_config(config_dir, contest):
                    "cluster": {"host": "", "port": "7300", "minutes": "30",
                                "call": "", "telnet_window": "yes",
                                "spot_from": "", "spot_dx": "",
-                               "spot_comment": "", "hide_worked": "no",
+                               "spot_comment": "", "spot_exclude": "",
+                               "hide_worked": "no",
                                "hide_skimmer": "no", "new_mults_only": "no",
                                "pota": "no", "sota": "no",
                                "pota_url": "https://api.pota.app/spot/activator",
@@ -2706,6 +2707,9 @@ class App:
                     ("c", "Comment contains: "
                           f"{cl.get('spot_comment', '').strip() or 'anything'} (change)",
                      "spot_comment"),
+                    ("e", "Comment does not contain: "
+                          f"{cl.get('spot_exclude', '').strip() or 'no word set'} "
+                          "(change)", "spot_exclude"),
                     ("h", f"Worked stations: {show('hide_worked')} (change)",
                      "hide_worked"),
                     ("k", f"Skimmer spots: {show('hide_skimmer')} (change)",
@@ -2720,6 +2724,7 @@ class App:
                     ("x", "Clear all filters", "filters_off")]}
 
     CLUSTER_ACTIONS = ("telnet_window", "pota", "sota", "spot_from", "spot_dx", "spot_comment",
+                       "spot_exclude",
                        "hide_worked", "hide_skimmer", "new_mults_only",
                        "login", "sota_login", "filters_off")
 
@@ -2791,9 +2796,22 @@ class App:
                                    "the source or comment, separated by commas, "
                                    "e.g. pota, sota (empty = all): ", "value": "", "action": save}
             reopen = False
+        elif action == "spot_exclude":
+            def save(value):
+                value = ", ".join(w.strip() for w in value.split(",") if w.strip())
+                problem = self.save_setting("cluster", spot_exclude=value)
+                self.msg = (f"Spots hidden: source or comment contains one of: "
+                            f"{value}{problem}." if value else
+                            f"No spots are hidden by their comment{problem}.")
+            self.prompt = {"text": "Hide spots with one of these words in the "
+                                   "source or comment, separated by commas, "
+                                   "e.g. ft8, ft4 (empty = none): ",
+                           "value": "", "action": save}
+            reopen = False
         elif action == "filters_off":
             problem = self.save_setting(
                 "cluster", spot_from="", spot_dx="", spot_comment="",
+                spot_exclude="",
                 hide_worked="no", hide_skimmer="no", new_mults_only="no")
             self.msg = f"All cluster filters are off{problem}."
         else:
@@ -2833,6 +2851,9 @@ class App:
                  if w.strip()]
         text = f"{row.get('source', '')} {row['comment']}".upper()
         if words and not any(word in text for word in words):
+            return True
+        if any(word.strip() and word.strip() in text
+               for word in cl.get("spot_exclude", "").upper().split(",")):
             return True
         if self.countries:
             for name, call in (("spot_from", row["spotter"]),

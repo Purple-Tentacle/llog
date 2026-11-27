@@ -386,8 +386,8 @@ menu("d", "f", "\r"); assert appf.cfg["cluster"]["spot_from"] == "" and "all" in
 menu("d", "d", "dl ea\r"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ"]   # stored EA8ZZ always stays
 menu("d", "d", "\r")
 menu("d", "k"); assert shown() == ["DL5QQ", "EA8ZZ", "K1ABC"] and "Skimmer spots are hidden" in appf.msg
-assert appf.menus[-1]["title"] == "DX cluster" and appf.menus[-1]["index"] == 7
-assert "Skimmer spots: hidden" in appf.menus[-1]["items"][7][1]
+assert appf.menus[-1]["title"] == "DX cluster" and appf.menus[-1]["index"] == 8
+assert "Skimmer spots: hidden" in appf.menus[-1]["items"][8][1]
 appf.key(None, "k"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
 appf.key(None, "h"); assert shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"]          # DL5QQ is in the log
 appf.toggle_view(); assert shown() == ["EA3ZZ", "EA8ZZ", "K1ABC"]; appf.toggle_view()   # band map too
@@ -449,6 +449,14 @@ assert texts["DL3ABC/P"] == " 14062.0 DL3ABC/P       0m SOTA DM/NS-001 cw cq sot
 assert texts["K1ABC"] == " 14025.0 K1ABC          0m DX   CQ TEST" and texts["EA8ZZ"].endswith("m      stored")
 menu("d", "c", "pota, sota\r"); assert shown() == ["DL1CR", "DL3ABC/P", "EA8ZZ", "KC5JEC"]   # several words; source counts
 menu("d", "c", "sota\r"); assert shown() == ["DL3ABC/P", "EA8ZZ"]
+menu("d", "c", "\r"); menu("d", "e", "ft8 , rbn,\r")           # negative filter: hide by word
+assert appf.cfg["cluster"]["spot_exclude"] == "ft8, rbn" and "hidden" in appf.msg
+assert shown() == ["DL1CR", "DL3ABC/P", "DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"] and appf.filtered == 1   # no KC5JEC
+menu("d", "e", "pota, cq test\r"); assert shown() == ["DL3ABC/P", "DL5QQ", "EA3ZZ", "EA8ZZ"]   # source and phrase
+menu("d", "c", "sota, wsa\r"); assert shown() == ["DL3ABC/P", "DL5QQ", "EA8ZZ"]                 # both filters together
+appf.menus = [appf.main_menu()]; appf.menu_key("d")
+assert appf.menus[-1]["items"][6][1] == "Comment does not contain: pota, cq test (change)"
+menu("d", "e", "\r"); assert "No spots are hidden" in appf.msg and appf.cfg["cluster"]["spot_exclude"] == ""
 menu("d", "c", "\r"); menu("d", "k"); assert "KC5JEC" not in shown() and "EA3ZZ" not in shown()   # RBN spot is a skimmer spot
 appf.key(None, "k"); menu("d", "f", "eu\r"); assert "KC5JEC" not in shown() and "DL3ABC/P" in shown()
 menu("d", "x")
@@ -493,7 +501,7 @@ menu("d", "l", "bad call!\r"); assert "not changed" in appf.msg and appf.cluster
 menu("d", "l", "\r"); assert (appf.cluster.call, appf.sota.call) == ("DA2IT", "DA2IT-4")   # empty: station callsign
 menu("d", "o", "\r"); assert appf.sota.call == "DA2IT" and appf.cfg["cluster"]["sota_call"] == ""
 appf.menus = [appf.main_menu()]; appf.menu_key("d")
-assert appf.menus[-1]["items"][9][1] == "Login at the DX node: DA2IT (change)"
+assert appf.menus[-1]["items"][10][1] == "Login at the DX node: DA2IT (change)"
 menu("d", "p"); appf.menus = []; appf.web.fetch("pota"); assert shown() == ["DL5QQ", "EA3ZZ", "EA8ZZ", "K1ABC"]
 look = lambda c: (lambda i: i and (i["prefix"], i["cont"], i["cq"]))(cty.lookup(c))
 assert look("DA2IT") == ("DL", "EU", "14") and look("OL5Y") == ("OK", "EU", "15")
