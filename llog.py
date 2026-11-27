@@ -2728,13 +2728,12 @@ class App:
             reopen = False
         elif action == "spot_comment":
             def save(value):
-                value = " ".join(value.replace(",", " ").split())
-                problem = self.save_setting("cluster", spot_comment=value)
-                self.msg = (f"Spots shown: source or comment contains one of: "
-                            f"{value}{problem}." if value else
+                problem = self.save_setting("cluster", spot_comment=value.strip())
+                self.msg = (f"Spots shown: source or comment contains "
+                            f"'{value.strip()}'{problem}." if value.strip() else
                             f"Comment filter off{problem}.")
             self.prompt = {"text": "Show only spots with one of these words in "
-                                   "the source or comment, e.g. pota sota "
+                                   "the source or comment, e.g. pota, sota "
                                    "(empty = all): ", "value": "", "action": save}
             reopen = False
         elif action == "filters_off":
@@ -2775,7 +2774,8 @@ class App:
             return False
         if self.cluster_flag("hide_skimmer") and row.get("skimmer"):
             return True
-        words = cl.get("spot_comment", "").upper().replace(",", " ").split()
+        words = [w.strip() for w in cl.get("spot_comment", "").upper().split(",")
+                 if w.strip()]
         text = f"{row.get('source', '')} {row['comment']}".upper()
         if words and not any(word in text for word in words):
             return True
